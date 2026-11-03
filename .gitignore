@@ -1,0 +1,8 @@
+build/
+build-*/
+node_modules/
+web/small-parts.html
+.DS_Store
+*.log
+compile_flags.txt
+_ref/
