@@ -11,12 +11,12 @@
 //
 // The Elegoo Centauri Carbon 2 printers in the model are converted from a
 // GPL-3.0 CAD release, so they are dropped and plain printer boxes of the same
-// size stand in their place. tools/lab-fixes.mjs holds corrections from people
-// who know the room (moved furniture, the supply closet doors, the basement).
+// size stand in their place. tools/lab-fixes.mjs holds the game's changes to the
+// room (a closet door propped open, the hatch plate shoved aside).
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { FT, moveFor, carveFor, subtract, extras } from './lab-fixes.mjs';
+import { FT, HOLE, moveFor, movePoint, carveFor, subtract, extras } from './lab-fixes.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const SCALE = 20;        // 1 m of lab is 20 game units: a 1.8 unit hero is 9 cm tall
@@ -94,8 +94,13 @@ for (const n of J.nodes) {
     }
     const mv = moveFor(n.name, ex.group, [(mnF[0] + mxF[0]) / 2, (mnF[1] + mxF[1]) / 2]);
     if (mv) {
-      for (let i = 0; i < pos.length; i += 3) { pos[i] += mv.dx * FT; pos[i + 2] += mv.dy * FT; }
-      mnF[0] += mv.dx; mxF[0] += mv.dx; mnF[1] += mv.dy; mxF[1] += mv.dy;
+      for (let k = 0; k < 3; k++) { mnF[k] = 1e9; mxF[k] = -1e9; }
+      for (let i = 0; i < pos.length; i += 3) {
+        const [fx, fy] = movePoint(mv, pos[i] / FT, pos[i + 2] / FT);
+        pos[i] = fx * FT; pos[i + 2] = fy * FT;
+        const f = [fx, fy, pos[i + 1] / FT];
+        for (let k = 0; k < 3; k++) { mnF[k] = Math.min(mnF[k], f[k]); mxF[k] = Math.max(mxF[k], f[k]); }
+      }
     }
     const cuts = carveFor(n.name, ex.group, mnF, mxF);
     const m = J.materials[p.material] || {};
@@ -292,9 +297,9 @@ for (const a of names) { const b = areas.get(a); h += `  {"${a}", {${b.slice(0, 
 h += '};\nenum {\n';
 names.forEach((a, i) => { h += `  AREA_${id(a)} = ${i},\n`; });
 h += '};\n';
-// the basement and its hatch (lab-fixes.mjs), for the missions
-landmarks.set('HATCH', [ftBox([111.25, 1.8, -0.5, 113.0, 6.6, 0.06])]);
-landmarks.set('BASEMENT', [ftBox([103.0, 0.3, -8.0, 123.0, 20.3, -0.49])]);
+// the basement and its hatch (in the model since revision 20), for the missions
+landmarks.set('HATCH', [ftBox([HOLE.x[0], HOLE.y[0], -0.5, HOLE.x[1], HOLE.y[1], 0.04])]);
+landmarks.set('BASEMENT', [ftBox([100.1, 0.6, -7.71, 120.1, 20.6, -0.49])]);
 landmarks.set('CLOSET_DOORS', [ftBox([110.6, 1.6, 0, 111.0, 6.8, 6.9])]);
 // the printers that were boxed are landmarks too: the print farm's four
 landmarks.set('PRINTER', [...printers.values()]);

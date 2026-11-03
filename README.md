@@ -53,6 +53,6 @@ Needs emsdk and Node 22. Clone with `--recursive` (or the first build fetches th
 - Army men: Quaternius's CC0 soldier, in moulded plastic.
 - The lab: the HSL-108 model of HeatSync Labs, 108 West Main, Mesa, with its GPL-3.0 printer parts removed.
 - Fonts: Archivo, IBM Plex Mono and JetBrains Mono, under the SIL Open Font License (`assets/fonts/OFL.txt`).
-- Speech: CMU Flite and its cmu_us_slt voice (BSD-style licence, `third_party/flite/COPYING`), compiled into the cart.
+- Voices: Moheeb, Luis and the bosses are recorded ahead of time by `tools/voices.mjs` with Piper voices run through sherpa-onnx: en_US-bryce (Moheeb), en_US-norman (Luis) and en_US-john (the Sergeant and the General), all released as public domain (bryce is its author's own voice; norman and john are LibriVox recordings). The army and the alerts are CMU Flite (BSD-style licence, `third_party/flite/COPYING`) compiled into the cart.
 - canvas_ity by Andrew Kensler (ISC licence), for the HUD.
 - Code, music and sound: original, written for this game, under the MIT licence (`LICENSE`).

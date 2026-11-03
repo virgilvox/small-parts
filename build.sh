@@ -107,6 +107,7 @@ rm -rf "$OUT/assets" && mkdir -p "$OUT/assets"
 cp "$ROOT"/assets/fonts/*.ttf "$OUT/assets/"
 cp "$ROOT"/assets/models/*.glb "$OUT/assets/"
 cp "$ROOT"/assets/anim/*.bin "$OUT/assets/"
+cp "$ROOT"/assets/voice/*.bin "$OUT/assets/"
 
 node "$WASMCART/bin/wasmcart-pack.js" --wasm "$OUT/$NAME.wasm" --assets "$OUT/assets" \
   --name "SMALL PARTS" --version "$VERSION" --width 1280 --height 720 --players 1 \

@@ -440,7 +440,7 @@ static v3 hatch_gap(void) { return v3_(lm_c(HATCH).x, 0, HATCH->min[2] + 3.5f); 
 static v3 dirt(v3 p) { return land(p, BASEMENT->max[1] - 1); }
 /* 7 KITCHEN AND DARKROOM: the back hall and the biolab, where the hatch by the
  * supply closet doors is open and the charger's battery pack has gone down it;
- * drop into the basement for it, jet back out up the dirt pile, then the
+ * drop into the basement for it, climb the dumped shelving and jet out, then the
  * kitchen, where the charger on the table needs sixty seconds and the army
  * wants the room */
 static void level_kitchen(void) {
@@ -618,7 +618,7 @@ static const line_t RADIO[MISSION_N][MAX_BEATS] = {
     {LU, "The hatch by the closet doors is open. Somebody shoved the plate aside."},
     {MO, "And the charger's battery pack is gone. Little boot prints, straight down the hatch."},
     {LU, "The basement. Dirt, drain pipes and a lot of army. No stairs."},
-    {MO, "Got the pack. Up the dirt pile, then jet out through the hatch."},
+    {MO, "Got the pack. Up the old shelving under the hatch, then jet out."},
     {MO, "Kitchen. The charger is on the table. Plug the pack in, then hold the room."},
     {LU, "Charging. Sixty seconds. Stay by the table, they heard the beep."},
     {MO, "Somebody labelled this yogurt in twenty nineteen."},

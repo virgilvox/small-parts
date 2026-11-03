@@ -62,7 +62,7 @@ They are not unarmed. A hackerspace at toy scale is an armoury: a laser-cut rubb
 - The woodshop: sawdust drifts, the Sergeant's megaphone.
 - Exit: the machine shop door is blocked (the army stacked the scrap bin against it), so they go the long way round, into the back hall.
 
-**Level 7, KITCHEN AND DARKROOM.** The back hall, the supply closet, the biolab. The jetpack batteries will not make the climb to the breaker panel; there is a charger on the kitchen table, but its battery pack is gone. Little boot prints lead to the hatch outside the supply closet doors, its steel plate shoved aside, and down into the basement: dirt, drain pipes, no stairs, and the army's hideout. Down for the pack, up the dirt pile and out on the jetpack, then the kitchen: plug in the charger and hold the room for sixty seconds. Beats:
+**Level 7, KITCHEN AND DARKROOM.** The back hall, the supply closet, the biolab. The jetpack batteries will not make the climb to the breaker panel; there is a charger on the kitchen table, but its battery pack is gone. Little boot prints lead through the propped supply closet door to the hatch in its floor, the steel plate shoved aside, and down into the basement: dirt, drain pipes, no stairs, and the army's hideout. Down for the pack, up an old steel shelving unit dumped under the hatch and out on the jetpack, then the kitchen: plug in the charger and hold the room for sixty seconds. Beats:
 - The supply closet: paper towels for a thousand years.
 - The basement: "Dirt, drain pipes and a lot of army. No stairs."
 - The fridge: somebody labelled this yogurt in twenty nineteen.

@@ -1,9 +1,11 @@
-/* voice.c: speech for radio calls, dialogue and alerts. tts.c (Flite) makes
- * one plain voice; each speaker is that voice with its own pitch and pace plus
- * a little DSP (radio band and squelch, PA ring and echo, a homesick wobble).
+/* voice.c: speech for dialogue, banter and alerts. Moheeb, Luis and the
+ * bosses play recordings from a pregenerated bank (tools/voices.mjs); the army
+ * and the alerts come from tts.c (Flite). Each speaker then gets its own DSP
+ * (warmth for the heroes, a megaphone, a pull-string toy speaker, tiny voices).
  * Finished lines are cached as 16 bit PCM at the output rate, keyed by speaker
  * and text, so repeats and prepared lines start at once. */
 #include "voice.h"
+#include "ds.h"
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -185,18 +187,75 @@ static entry *entry_slot(size_t need) {
   }
 }
 
+
+/* ── the recorded lines (assets/voice/voices.bin, made by tools/voices.mjs) ──
+ * Moheeb, Luis and the bosses speak from a bank of neural voice recordings in
+ * IMA ADPCM; anything not in it (the army, alerts) is synthesised by Flite. */
+typedef struct { uint32_t key, rate, n, off; } bank_ent;
+static uint8_t *bank; static size_t bank_len;
+static const bank_ent *bank_tab; static uint32_t bank_n;
+static const uint8_t *bank_data;
+
+static uint32_t line_key(vo_speaker s, const char *text) {
+  uint32_t h = 0x811c9dc5u;
+  h ^= (uint8_t)s; h *= 0x01000193u;
+  for (const uint8_t *p = (const uint8_t *)text; *p; p++) { h ^= *p; h *= 0x01000193u; }
+  return h;
+}
+static void bank_load(void) {
+  if (bank) return;
+  bank = ds_asset("voices.bin", &bank_len);
+  if (!bank || bank_len < 12 || memcmp(bank, "SPVB", 4)) { free(bank); bank = NULL; return; }
+  uint32_t n; memcpy(&n, bank + 8, 4);
+  if (12 + (size_t)n * 16 > bank_len) { free(bank); bank = NULL; return; }
+  bank_n = n; bank_tab = (const bank_ent *)(bank + 12); bank_data = bank + 12 + (size_t)n * 16;
+}
+static const bank_ent *bank_find(uint32_t key) {
+  uint32_t lo = 0, hi = bank_n;
+  while (lo < hi) { uint32_t m = (lo + hi) / 2; if (bank_tab[m].key < key) lo = m + 1; else hi = m; }
+  return lo < bank_n && bank_tab[lo].key == key ? &bank_tab[lo] : NULL;
+}
+static int16_t *bank_decode(const bank_ent *e) {
+  static const int16_t STEP[89] = {7, 8, 9, 10, 11, 12, 13, 14, 16, 17, 19, 21, 23, 25, 28, 31, 34, 37, 41, 45, 50, 55, 60, 66, 73, 80, 88, 97, 107, 118, 130, 143, 157, 173, 190, 209, 230, 253, 279, 307, 337, 371, 408, 449, 494, 544, 598, 658, 724, 796, 876, 963, 1060, 1166, 1282, 1411, 1552, 1707, 1878, 2066, 2272, 2499, 2749, 3024, 3327, 3660, 4026, 4428, 4871, 5358, 5894, 6484, 7132, 7845, 8630, 9493, 10442, 11487, 12635, 13899, 15289, 16818, 18500, 20350, 22385, 24623, 27086, 29794, 32767};
+  static const int8_t IDX[8] = {-1, -1, -1, -1, 2, 4, 6, 8};
+  if ((size_t)(bank_data - bank) + e->off + (e->n + 1) / 2 > bank_len) return NULL;
+  int16_t *o = (int16_t *)malloc((size_t)e->n * sizeof(int16_t));
+  if (!o) return NULL;
+  int pred = 0, idx = 0;
+  const uint8_t *d = bank_data + e->off;
+  for (uint32_t i = 0; i < e->n; i++) {
+    int code = (i & 1) ? d[i >> 1] >> 4 : d[i >> 1] & 15, step = STEP[idx], diff = step >> 3;
+    if (code & 4) diff += step;
+    if (code & 2) diff += step >> 1;
+    if (code & 1) diff += step >> 2;
+    pred += code & 8 ? -diff : diff;
+    pred = pred < -32768 ? -32768 : pred > 32767 ? 32767 : pred;
+    idx += IDX[code & 7]; idx = idx < 0 ? 0 : idx > 88 ? 88 : idx;
+    o[i] = (int16_t)pred;
+  }
+  return o;
+}
+
 static entry *synth_line(vo_speaker s, const char *text) {
   if (s < 0 || s >= VO_COUNT || !text || !*text) return NULL;
   entry *hit = entry_find(s, text);
   if (hit) return hit;
-  char norm[TEXT_MAX];
-  tts_normalise(text, norm, sizeof norm);
-  if (!*norm) return NULL;
-  const vo_style *st = &STYLE[s];
-  int n16 = 0;
-  int16_t *raw = tts_synth(st->v, norm, st->pitch, st->range, st->stretch, &n16);
-  if (!raw) return NULL;
-  int rate_in = tts_rate(), speech = 0;
+  int n16 = 0, rate_in = 0, speech = 0;
+  int16_t *raw = NULL;
+  const bank_ent *rec = bank ? bank_find(line_key(s, text)) : NULL;
+  if (rec && (raw = bank_decode(rec))) { n16 = (int)rec->n; rate_in = (int)rec->rate; }
+  else {
+#ifdef DS_TRACE
+    if (s <= VO_GENERAL) ds_log("[vo] not in the bank, synthesised: %d|%s", (int)s, text);
+#endif
+    char norm[TEXT_MAX];
+    tts_normalise(text, norm, sizeof norm);
+    if (!*norm) return NULL;
+    const vo_style *st = &STYLE[s];
+    raw = tts_synth(st->v, norm, st->pitch, st->range, st->stretch, &n16);
+    if (!raw) return NULL;
+    rate_in = tts_rate();
+  }
   float *sp = resample(raw, n16, rate_in, (int)out_rate, &speech);
   free(raw);
   if (!sp) return NULL;
@@ -239,9 +298,15 @@ void voice_init(uint32_t rate) {
   for (int i = 0; i < CACHE_MAX; i++) entry_free(&cache[i]);   /* a new rate invalidates the cached PCM */
   cur = NULL; pos = 0; fade = -1; cache_seq = 0;
   tts_rate();   /* load the voice now, so the first spoken line is not the one that stalls */
+  bank_load();
 }
 
-void voice_prepare(vo_speaker s, const char *text) { if (enabled) synth_line(s, text); }
+void voice_prepare(vo_speaker s, const char *text) {
+#ifdef SP_DUMP
+  ds_log("[vo] %d|%s", (int)s, text ? text : "");
+#endif
+  if (enabled) synth_line(s, text);
+}
 
 void voice_say(vo_speaker s, const char *text) {
   if (!enabled) return;

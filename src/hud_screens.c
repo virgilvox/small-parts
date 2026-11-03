@@ -395,7 +395,7 @@ void scr_end(const hud_t *h) {
     "#CHARACTERS", "Moheeb and Luis from COFFEE & KILL.", "",
     "#ARMY MEN", "Quaternius, CC0.", "Five hundred of them. Now very still.", "",
     "#THE LAB", "The HSL-108 model of HeatSync Labs,", "108 West Main, Mesa.", "",
-    "#SPEECH", "CMU Flite", "",
+    "#VOICES", "Piper voices bryce, norman, john", "CMU Flite for the army", "",
     "#FONTS", "Archivo, IBM Plex Mono, JetBrains Mono,", "under the Open Font License", "",
     "#CODE", "MIT. Music and sound synthesised in code,", "no samples.", "",
     "@THANK YOU FOR PLAYING", "PLEASE RETURN THE SCALE TO 1:1 WHEN YOU ARE DONE.", "", "^ARMY_MEN_x500   62 PERCENT"};

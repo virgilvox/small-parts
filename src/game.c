@@ -66,6 +66,7 @@ static v3 checkpoint;
 /* ── the buddy ── */
 static v3 bpos, bvel;
 static float byaw, bhp, bdown_t, bfire_cd, bjet;
+static float bapart_t;   /* seconds the buddy has been too far, out of sight or stuck below the player */
 static bool bgrounded, bjetting;
 
 /* ── the camera ── */
@@ -107,7 +108,7 @@ static void reset_player(v3 at, float face) {
   pos = at; vel = v3_(0, 0, 0); yaw = face;
   hp = HP_MAX; jet = 1; jet_delay = 0; dodge_t = dodge_cd = 0; hurt_iframes = 1.5f;
   grounded = false; jetting = false;
-  bpos = beside(at, face, -1.4f); bvel = v3_(0, 0, 0); byaw = face; bhp = HP_MAX; bdown_t = 0; bjet = 1;
+  bpos = beside(at, face, -1.4f); bvel = v3_(0, 0, 0); byaw = face; bhp = HP_MAX; bdown_t = 0; bjet = 1; bapart_t = 0;
   cam_yaw = face + DS_PI; cam_pitch = -0.15f;
   cam_fwd = v3_(-sinf(cam_yaw), 0, -cosf(cam_yaw));
 }
@@ -201,6 +202,18 @@ void game_init(void) {
   fx_init(scene);
   hud_init();
   audio_set_music(DS_SAVE.music);
+#ifdef SP_DUMP   /* tools: every line the game can speak, for tools/voices.mjs */
+  for (int h = 0; h < HERO_COUNT; h++) {
+    for (int c = 0; c < CUT_COUNT; c++) {
+      cutscene_start((cut_id)c, (hero_id)h);
+      for (int k = 0; k < 400 && cutscene_active(); k++) cutscene_update(0.0001f, input_get(), &CV);
+    }
+    for (int l = 0; l < MISSION_N; l++)
+      for (int b = 0; b < mission_radio_count(l); b++) { const char *spk, *line = mission_radio(l, b, &spk); if (line) voice_prepare(cutscene_voice_for(spk), line); }
+    voice_prepare(cutscene_voice_for(toy_name((hero_id)(h ^ 1))), "I'm fine. Give me a second.");
+  }
+  ds_log("[vo] done");
+#endif
   to_title();
 }
 
@@ -255,6 +268,26 @@ static void update_camera(float dt, const intent_t *I) {
   audio_listener(p.x, p.y, p.z, cam_yaw);
 }
 
+/* put the buddy beside the player: the left shoulder, else the right, else behind,
+ * else on the player's own spot; somewhere with a floor, room to stand, and in sight */
+static void buddy_warp(void) {
+  v3 chest = v3_add(pos, v3_(0, HERO_H * 0.6f, 0));
+  v3 cand[4] = {beside(pos, yaw, -2.2f), beside(pos, yaw, 2.2f), v3_add(pos, v3_(-sinf(yaw) * 2, 0, -cosf(yaw) * 2)), pos};
+  v3 to = pos;
+  for (int i = 0; i < 4; i++) {
+    v3 c = cand[i];
+    float f = world_floor_y(v3_(c.x, pos.y + 1.0f, c.z));
+    if (f < pos.y - 1.5f || f > pos.y + 1.0f) continue;
+    c.y = f;
+    v3 body = v3_add(c, v3_(0, HERO_H * 0.6f, 0)), n, probe = body;
+    if (world_push_sphere(&probe, HERO_R, &n) || !world_visible(chest, body)) continue;
+    to = c; break;
+  }
+  fx_poof(v3_add(bpos, v3_(0, 0.9f, 0)), C_CREAM, 0.8f);
+  bpos = v3_add(to, v3_(0, 0.05f, 0)); bvel = v3_(0, 0, 0); byaw = yaw; bapart_t = 0;
+  fx_poof(v3_add(bpos, v3_(0, 0.9f, 0)), C_CREAM, 0.8f);
+}
+
 /* the buddy: keeps to the player's left shoulder, jets up after them, shoots
  * what is nearest and in sight, and gets back up a few seconds after a fall */
 static void update_buddy(float dt) {
@@ -269,9 +302,13 @@ static void update_buddy(float dt) {
   v3 goal = beside(pos, yaw, -2.2f);
   v3 to = v3_sub(goal, bpos);
   float flat = sqrtf(to.x * to.x + to.z * to.z);
-  if (flat > 60 || (st == ST_PLAY && v3_len(v3_sub(pos, bpos)) > 80)) {   /* lost: catch up out of sight */
-    bpos = v3_add(beside(pos, yaw, -1.6f), v3_(0, 0.2f, 0)); bvel = v3_(0, 0, 0); return;
-  }
+  /* separated: too far, out of sight, or left below while the player climbed. Past a moment
+   * of that the buddy warps to the player rather than wandering the lab looking for a way */
+  float apart = v3_len(v3_sub(pos, bpos));
+  v3 chest = v3_add(pos, v3_(0, HERO_H * 0.6f, 0)), bchest = v3_add(bpos, v3_(0, HERO_H * 0.6f, 0));
+  bool far_off = apart > 26, hidden = !world_visible(chest, bchest), below = pos.y - bpos.y > 5 && grounded;
+  bapart_t = (far_off || hidden || below) ? bapart_t + dt : 0;
+  if (apart > 60 || bapart_t > (far_off ? 1.0f : below ? 2.5f : 2.0f)) { buddy_warp(); return; }
   float sp = flat > 6 ? RUN_SPEED * 1.15f : flat > 1.2f ? RUN_SPEED * 0.7f : 0;
   v3 dir = flat > 0.01f ? v3_(to.x / flat, 0, to.z / flat) : v3_(0, 0, 0);
   bvel.x = ds_damp(bvel.x, dir.x * sp, bgrounded ? 12 : 4, dt);
@@ -331,9 +368,10 @@ static void update_play(float dt, const intent_t *I) {
   level_time += dt;
 #ifdef DS_TRACE
   if (input_key_down(WC_KEY_8)) hp = HP_MAX;
-  /* test only: 7 onto the basement hatch gap, 6 into member storage's U */
-  if (input_key_down(WC_KEY_7)) { pos = v3_(683.5f, 0.5f, 14.6f); vel = v3_(0, 0, 0); cam_yaw = DS_PI * 0.5f; }
-  if (input_key_down(WC_KEY_6)) { pos = v3_(372, 0.2f, 60); vel = v3_(0, 0, 0); cam_yaw = DS_PI * 0.0f; }
+  /* test only: 7 onto the basement hatch gap, 6 onto the hatch gap */
+  if (input_key_down(WC_KEY_7)) { pos = v3_(690, 0.5f, 33); cam_yaw = DS_PI * 0.5f; vel = v3_(0, 0, 0); cam_yaw = DS_PI * 0.5f; }
+  if (input_key_down(WC_KEY_5)) { pos = v3_(666, -10.4f, 27.5f); vel = v3_(0, 0, 0); cam_yaw = 0; }   /* the top shelf's front edge, under the gap */
+  if (input_key_down(WC_KEY_6)) { pos = v3_(666, 0.5f, 22); vel = v3_(0, 0, 0); cam_yaw = DS_PI * 0.0f; }
 #endif
   combat_t -= dt; hurt_iframes -= dt; swing_t -= dt;
   /* the view */
@@ -721,7 +759,7 @@ void game_frame(float dt) {
   }
 #ifdef DS_TRACE
   { static int fr; if (++fr % 60 == 0) {
-    ds_log("[trace] f%d st%d lvl%d pos %.1f %.1f %.1f vy %.1f hp %.0f jet %.2f g%d alive %d area %s", fr, st, level, pos.x, pos.y, pos.z, vel.y, hp, jet, grounded, enemy_alive(), world_area_name(world_area_at(pos)));
+    ds_log("[trace] f%d st%d lvl%d pos %.1f %.1f %.1f vy %.1f hp %.0f jet %.2f g%d alive %d buddy %.1f %.1f %.1f area %s", fr, st, level, pos.x, pos.y, pos.z, vel.y, hp, jet, grounded, enemy_alive(), bpos.x, bpos.y, bpos.z, world_area_name(world_area_at(pos)));
     const t3_render_info *ri = t3_renderer_info(DS_R);
     int cnt[2] = {0, 0}; t3_object_traverse(&scene->base, trace_count, cnt);
     ds_log("[trace] draw calls %u tris %u objects %d meshes %d", ri->calls, ri->triangles, cnt[0], cnt[1]); } }
