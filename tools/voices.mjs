@@ -1,6 +1,7 @@
-// Pregenerates Moheeb's, Luis's and the bosses' dialogue with a neural voice
-// (Piper VITS models run by sherpa-onnx), so the cart plays real recordings
-// instead of synthesising them with Flite. Writes assets/voice/voices.bin:
+// Pregenerates Moheeb's, Luis's and the bosses' dialogue with Kyutai Pocket TTS
+// (tools/voices_kyutai.py), cloning Moheeb and Luis from recordings of their
+// own voices, so the cart plays real speech instead of synthesising it with
+// Flite. Writes assets/voice/voices.bin:
 //
 //   "SPVB" u32 version, u32 count, count x { u32 key, u32 rate, u32 samples, u32 offset }, then
 //   IMA ADPCM data (4 bits a sample, low nibble first, the predictor and step index
@@ -12,30 +13,25 @@
 // enemy.c's boss shouts and game.c's buddy line. Army men and alerts stay on
 // Flite in the cart.
 //
-//   SHERPA=<sherpa-onnx dir> MODELS=<dir of vits-piper-* folders> node tools/voices.mjs
+//   PYTHON=<venv python with pocket-tts> HF_TOKEN=<token> MOHEEB_WAV=<wav> LUIS_WAV=<wav> node tools/voices.mjs
 //
-// Voices (all public domain or CC0 datasets, see docs/DESIGN.md): Moheeb is
-// en_US-bryce (soft, younger), Luis is en_US-norman (older, gruffer), the
-// Sergeant and the General are en_US-john, which voice.c then puts through a
-// megaphone and a pull-string toy speaker.
-import { readFileSync, writeFileSync, mkdirSync, existsSync, unlinkSync } from 'node:fs';
+// The references are about 20 s of each person talking, mono 24 kHz. The
+// Sergeant and the General use Pocket TTS's built-in voices, which voice.c
+// then puts through a megaphone and a pull-string toy speaker.
+import { readFileSync, writeFileSync, mkdirSync, unlinkSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
-const SHERPA = process.env.SHERPA, MODELS = process.env.MODELS;
-if (!SHERPA || !MODELS) { console.error('set SHERPA and MODELS (see the top of this file)'); process.exit(1); }
 
-/* voice.h vo_speaker ids, and the voice and pace for each */
+/* voice.h vo_speaker ids, and the reference voice for each */
 const SPK = { MOHEEB: 0, LUIS: 1, 'THE SERGEANT': 2, 'THE GENERAL': 3 };
-const VOICE = {
-  0: { model: 'bryce', length: 1.0, noise: 0.6 },
-  1: { model: 'norman', length: 1.1, noise: 0.75 },
-  2: { model: 'john', length: 0.9, noise: 0.667 },
-  3: { model: 'john', length: 1.2, noise: 0.5 },
-};
+const LISTING = process.argv.includes('--list');
+const PYTHON = process.env.PYTHON, REF = { 0: process.env.MOHEEB_WAV, 1: process.env.LUIS_WAV, 2: 'jean', 3: 'javert' };
+if (!LISTING && (!PYTHON || !REF[0] || !REF[1])) { console.error('set PYTHON, MOHEEB_WAV and LUIS_WAV (see the top of this file)'); process.exit(1); }
+const RATE = 24000;
 
 /* ── the lines ── */
 const src = (f) => readFileSync(join(ROOT, 'src', f), 'utf8');
@@ -78,17 +74,10 @@ function speakable(t) {
   s = s.replace(/\bESD\b/g, 'E S D').replace(/\bCNC\b/g, 'C N C').replace(/_/g, ' ');
   return s;
 }
-function synth(v, text, out) {
-  const V = VOICE[v], M = join(MODELS, `vits-piper-en_US-${V.model}-medium`);
-  execFileSync(join(SHERPA, 'bin', 'sherpa-onnx-offline-tts'), [
-    `--vits-model=${join(M, `en_US-${V.model}-medium.onnx`)}`, `--vits-tokens=${join(M, 'tokens.txt')}`,
-    `--vits-data-dir=${join(M, 'espeak-ng-data')}`, `--vits-length-scale=${V.length}`, `--vits-noise-scale=${V.noise}`,
-    `--output-filename=${out}`, speakable(text)], { stdio: 'pipe' });
-}
-/* any wav to mono 16 bit at 16 kHz, through ffmpeg; trims leading and trailing silence */
-function to16k(wav) {
+/* any wav to mono 16 bit at RATE, through ffmpeg; trims leading and trailing silence */
+function toRate(wav) {
   const raw = execFileSync('ffmpeg', ['-v', 'error', '-i', wav, '-af', 'silenceremove=start_periods=1:start_threshold=-50dB,areverse,silenceremove=start_periods=1:start_threshold=-50dB,areverse',
-    '-ar', '16000', '-ac', '1', '-f', 's16le', '-'], { maxBuffer: 64 << 20 });
+    '-ar', String(RATE), '-ac', '1', '-f', 's16le', '-'], { maxBuffer: 64 << 20 });
   return new Int16Array(raw.buffer, raw.byteOffset, raw.length >> 1);
 }
 
@@ -113,18 +102,27 @@ function adpcm(pcm) {
   return out;
 }
 
-const tmp = join(tmpdir(), `sp-voice-${process.pid}.wav`);
+/* --list: the lines and their keys, nothing synthesised (to check a bank against the source) */
+if (process.argv.includes('--list')) {
+  for (const L of lines.values()) console.log(`${fnv(L.id, L.text).toString(16).padStart(8, '0')}\t${L.id}\t${L.say}`);
+  process.exit(0);
+}
+/* every line in one run of the generator: the model loads once */
+const work = join(tmpdir(), `sp-voices-${process.pid}`);
+mkdirSync(work, { recursive: true });
+const list = [...lines.values()];
+const spec = { voices: { 0: REF[0], 1: REF[1], 2: REF[2], 3: REF[3] }, jobs: list.map((L, i) => ({ voice: String(L.id), text: speakable(L.say), out: join(work, `${i}.wav`) })) };
+writeFileSync(join(work, 'jobs.json'), JSON.stringify(spec));
+execFileSync(PYTHON, [join(ROOT, 'tools/voices_kyutai.py'), join(work, 'jobs.json')], { stdio: 'inherit' });
 const ents = [], blobs = [];
 let off = 0, secs = 0;
-for (const L of lines.values()) {
-  synth(L.id, L.say, tmp);
-  const pcm = to16k(tmp);
+list.forEach((L, i) => {
+  const pcm = toRate(join(work, `${i}.wav`));
   const data = adpcm(pcm);
-  ents.push({ key: fnv(L.id, L.text), rate: 16000, n: pcm.length, off });
-  blobs.push(data); off += data.length; secs += pcm.length / 16000;
-  process.stdout.write('.');
-}
-if (existsSync(tmp)) unlinkSync(tmp);
+  ents.push({ key: fnv(L.id, L.text), rate: RATE, n: pcm.length, off });
+  blobs.push(data); off += data.length; secs += pcm.length / RATE;
+  unlinkSync(join(work, `${i}.wav`));
+});
 const keys = new Set(ents.map((e) => e.key));
 if (keys.size !== ents.length) { console.error('\nkey collision'); process.exit(1); }
 ents.sort((a, b) => a.key - b.key);   /* voice.c binary searches the table */

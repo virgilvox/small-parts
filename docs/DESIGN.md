@@ -97,7 +97,7 @@ Each level has 6 to 10 walkie beats (STORY.md), 2 to 4 checkpoints, pickups alon
 | `src/cutscene.c`, `cutscene.h` | the cutscenes and their staging |
 | `src/hud*.c`, `hud.h` | the HUD and every screen |
 | `src/audio.c`, `audio.h` | the synth: effects and music moods |
-| `src/voice.c`, `src/tts.c` | speech: the recorded bank (`assets/voice/voices.bin` from `tools/voices.mjs`: Piper voices, Moheeb bryce, Luis norman, the bosses john) and CMU Flite in the cart for the army and alerts; coloured per speaker |
+| `src/voice.c`, `src/tts.c` | speech: the recorded bank (`assets/voice/voices.bin` from `tools/voices.mjs` and `tools/voices_kyutai.py`: Kyutai Pocket TTS cloning Moheeb and Luis from recordings of their own voices, the bosses on its built-in voices) and CMU Flite in the cart for the army and alerts; coloured per speaker |
 | `src/fx.c`, `fx.h` | particles, tracers, puffs, explosions |
 | `web/index.src.html` | the one-file web player |
 | `tools/prep-lab.mjs` | the lab from the HSL-108 model (drops its GPL printer parts) |

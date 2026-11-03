@@ -120,16 +120,112 @@ static void build_pack(toy_t *t) {
   t3_object_add(t->root, t->pack);
 }
 
+
+/* The heroes' photo-scanned texture is an atlas of hundreds of small UV islands
+ * packed edge to edge: pale skin and shirt next to black hair and trousers. At
+ * game distance the GPU's mipmaps average across neighbouring islands, which
+ * scatters pale specks over the dark parts. Rebuild it at 512 px, each texel
+ * averaging only the source texels of the island that covers most of its
+ * block, grow the islands a few texels into the gaps, and sample it without
+ * mipmaps (512 px is plenty for a 480x270 frame). */
+static uint32_t uf_find(uint32_t *p, uint32_t a) { while (p[a] != a) { p[a] = p[p[a]]; a = p[a]; } return a; }
+static void clean_skin(t3_mesh *m) {
+  t3_material *M = m->materials[0];
+  t3_texture *T = M ? M->map : NULL;
+  t3_geometry *g = m->geometry;
+  t3_attribute *uv = g->attributes[T3_ATTR_UV];
+  if (!T || !T->pixels || !uv || !g->index || T->width < 1024 || T->type != T3_UNSIGNED_BYTE_TYPE) return;
+  const int W = T->width, H = T->height, D = 4, OW = W / D, OH = H / D;
+  const float *U = t3_attribute_f32(uv);
+  int nv = uv->count, ni = g->index->count;
+  const void *ix = g->index->array; bool big = g->index->type == T3_UINT32;
+  #define IDX(k) (big ? ((const uint32_t *)ix)[k] : ((const uint16_t *)ix)[k])
+  /* islands: vertices joined by triangles */
+  uint32_t *par = malloc((size_t)nv * sizeof *par);
+  uint16_t *id = calloc((size_t)W * H, sizeof *id);   /* island + 1 per source texel, 0 = gap */
+  if (!par || !id) { free(par); free(id); return; }
+  for (int i = 0; i < nv; i++) par[i] = (uint32_t)i;
+  for (int t = 0; t + 2 < ni; t += 3) {
+    uint32_t a = uf_find(par, IDX(t)), b = uf_find(par, IDX(t + 1)), c = uf_find(par, IDX(t + 2));
+    par[b] = a; par[uf_find(par, c)] = a;
+  }
+  for (int t = 0; t + 2 < ni; t += 3) {
+    uint32_t v[3] = {IDX(t), IDX(t + 1), IDX(t + 2)};
+    uint16_t isl = (uint16_t)(uf_find(par, v[0]) % 65535 + 1);
+    float x[3], y[3];
+    for (int k = 0; k < 3; k++) { x[k] = U[v[k] * 2] * W; y[k] = (T->flip_y ? 1 - U[v[k] * 2 + 1] : U[v[k] * 2 + 1]) * H; }
+    int x0 = (int)floorf(fminf(x[0], fminf(x[1], x[2]))), x1 = (int)ceilf(fmaxf(x[0], fmaxf(x[1], x[2])));
+    int y0 = (int)floorf(fminf(y[0], fminf(y[1], y[2]))), y1 = (int)ceilf(fmaxf(y[0], fmaxf(y[1], y[2])));
+    float area = (x[1] - x[0]) * (y[2] - y[0]) - (x[2] - x[0]) * (y[1] - y[0]);
+    if (fabsf(area) < 1e-6f) continue;
+    for (int py = y0 < 0 ? 0 : y0; py <= y1 && py < H; py++)
+      for (int px = x0 < 0 ? 0 : x0; px <= x1 && px < W; px++) {
+        float cx = px + 0.5f, cy = py + 0.5f;
+        float w0 = (x[1] - cx) * (y[2] - cy) - (x[2] - cx) * (y[1] - cy);
+        float w1 = (x[2] - cx) * (y[0] - cy) - (x[0] - cx) * (y[2] - cy);
+        float w2 = (x[0] - cx) * (y[1] - cy) - (x[1] - cx) * (y[0] - cy);
+        if ((w0 >= 0 && w1 >= 0 && w2 >= 0) || (w0 <= 0 && w1 <= 0 && w2 <= 0)) id[(size_t)py * W + px] = isl;
+      }
+  }
+  #undef IDX
+  /* the downsample: per block, the island with the most texels, averaged */
+  uint8_t *out = calloc((size_t)OW * OH * 4, 1);
+  uint16_t *oid = calloc((size_t)OW * OH, sizeof *oid);
+  if (!out || !oid) { free(par); free(id); free(out); free(oid); return; }
+  for (int by = 0; by < OH; by++)
+    for (int bx = 0; bx < OW; bx++) {
+      uint16_t best = 0; int bestn = 0;
+      for (int k = 0; k < D * D; k++) {
+        uint16_t c = id[(size_t)(by * D + k / D) * W + bx * D + k % D];
+        if (!c) continue;
+        int n = 0;
+        for (int j = 0; j < D * D; j++) n += id[(size_t)(by * D + j / D) * W + bx * D + j % D] == c;
+        if (n > bestn) { bestn = n; best = c; }
+      }
+      if (!best) continue;
+      unsigned acc[3] = {0, 0, 0};
+      for (int j = 0; j < D * D; j++) {
+        size_t s = (size_t)(by * D + j / D) * W + bx * D + j % D;
+        if (id[s] != best) continue;
+        for (int ch = 0; ch < 3; ch++) acc[ch] += T->pixels[s * 4 + ch];
+      }
+      size_t o = (size_t)by * OW + bx;
+      for (int ch = 0; ch < 3; ch++) out[o * 4 + ch] = (uint8_t)(acc[ch] / (unsigned)bestn);
+      out[o * 4 + 3] = 255; oid[o] = best;
+    }
+  /* grow the islands into the gaps so bilinear taps at an edge stay on colour */
+  for (int pass = 0; pass < 4; pass++)
+    for (int y = 0; y < OH; y++)
+      for (int x = 0; x < OW; x++) {
+        size_t o = (size_t)y * OW + x;
+        if (oid[o]) continue;
+        static const int N[4][2] = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
+        for (int k = 0; k < 4; k++) {
+          int nx = x + N[k][0], ny = y + N[k][1];
+          if (nx < 0 || ny < 0 || nx >= OW || ny >= OH) continue;
+          size_t q = (size_t)ny * OW + nx;
+          if (!oid[q] || oid[q] == 0xffff) continue;
+          memcpy(out + o * 4, out + q * 4, 4); oid[o] = 0xffff; break;   /* filled this pass; grows from it next pass */
+        }
+      }
+  free(par); free(id); free(oid);
+  free(T->pixels);
+  T->pixels = out; T->width = OW; T->height = OH;
+  T->generate_mipmaps = false; T->min_filter = T3_LINEAR; T->mag_filter = T3_LINEAR;
+  T->version++;
+}
+
 static void mesh_setup(t3_object *o, void *ctx) {
   (void)ctx;
   if (o->type != T3_MESH && o->type != T3_SKINNED_MESH) return;
   o->frustum_culled = false; o->cast_shadow = false; o->receive_shadow = false;
   t3_mesh *m = (t3_mesh *)o;
+  if (m->material_count > 0) clean_skin(m);
   for (int i = 0; i < m->material_count; i++) {
     t3_material *M = m->materials[i];
     if (!M) continue;
     M->metalness = 0.02f; M->roughness = 0.85f;
-    if (M->map) { M->map->mag_filter = T3_NEAREST; M->map->version++; }   /* PS1: point sampled */
+    M->emissive_intensity = 0.1f;   /* the export wires the texture into emissive at full strength too, as Coffee & Kill found */
     M->version++;
   }
 }
