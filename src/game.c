@@ -853,5 +853,7 @@ void game_frame(float dt) {
 
 void game_draw(void) {
   render_scene(scene, cam);
+#ifndef SP_NOHUD   /* test only: clean frames for the web page and the station image */
   hud_draw(&H);
+#endif
 }
