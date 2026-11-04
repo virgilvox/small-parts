@@ -599,7 +599,7 @@ static void update_play(float dt, const intent_t *I) {
 #ifdef DS_TRACE
   if (input_key_down(WC_KEY_8)) P->hp = HP_MAX;
   /* test only: 7 onto the basement hatch gap, 6 onto the hatch gap */
-  if (input_key_down(WC_KEY_7)) { P->pos = v3_(690, 0.5f, 33); P->cam_yaw = DS_PI * 0.5f; P->vel = v3_(0, 0, 0); P->cam_yaw = DS_PI * 0.5f; }
+  if (input_key_down(WC_KEY_7)) { P->pos = v3_(86, 0.5f, 161.2f); P->vel = v3_(0, 0, 0); P->cam_yaw = DS_PI * 0.5f; P->cam_pitch = -0.1f; }   /* the foot of the ruler up to the hacker bay */
   if (input_key_down(WC_KEY_5)) { P->pos = v3_(666, -10.4f, 27.5f); P->vel = v3_(0, 0, 0); P->cam_yaw = 0; }   /* the top shelf's front edge, under the gap */
   if (input_key_down(WC_KEY_6)) { P->pos = v3_(666, 0.5f, 22); P->vel = v3_(0, 0, 0); P->cam_yaw = DS_PI * 0.0f; }
   /* test only: 9 knocks player 2 down, 0 player 1, 4 puts player 2 on the objective arrow (two players) */
@@ -848,8 +848,8 @@ static void title_reel(float t) {
     toy_aim(P->toy, 0.25f, 1); toy_aim(B->toy, -0.2f, 1); }
 #endif
 #ifdef SP_VIEW   /* test only: fixed views of the model's corrections, a few seconds each */
-  { static const float V[][6] = {{690, 14, 4, 683, -30, 18}, {700, 9, 50, 683, 0, 26}, {735, -20, 95, 683, -36, 26}, {660, -38, 20, 700, -46, 60}, {350, 40, 95, 375, 0, 30}, {395, 12, 70, 382, 8, 30}};
-    int k = (int)(t / 2.5f) % 6; P->cam_pos = v3_(V[k][0], V[k][1], V[k][2]); look = v3_(V[k][3], V[k][4], V[k][5]);
+  { static const float V[][6] = {{88, 24.5f, 92, 81.6f, 22, 99.2f}, {84, 23, 104, 81.6f, 22, 99.2f}, {100, 12, 150, 68, 6, 161}, {40, 12, 168, 70, 9, 161}, {78, 4, 162, 68, 6, 161}};
+    int k = (int)(t / 2.5f) % 5; P->cam_pos = v3_(V[k][0], V[k][1], V[k][2]); look = v3_(V[k][3], V[k][4], V[k][5]);
     toy_visible(P->toy, false); toy_visible(B->toy, false); }
 #endif
   cam->fov = 52; cam->aspect = (float)DS_W / DS_H; t3_camera_update_projection_matrix(cam);
@@ -1012,8 +1012,8 @@ void game_frame(float dt) {
         break;
       default: break;
     }
+    world_update(dt, P->pos);   /* the lab's own motion (the LED cube) runs in every state */
     if (st == ST_PLAY || st == ST_DEAD || st == ST_CLEAR) {
-      world_update(dt, P->pos);
       enemy_target_t T0 = {P->pos, HERO_R, HERO_H, st == ST_PLAY && P->hp > 0 && P->down_t <= 0};
       enemy_target_t T1 = {B->pos, HERO_R, HERO_H, B->down_t <= 0 && (!coop || B->hp > 0)};
       enemy_update(dt, &T0, &T1);

@@ -137,6 +137,8 @@ static t3_object *build_ceiling(void) {
   return root;
 }
 
+static void build_leds(t3_scene *scene);   /* the LED cube, below */
+
 void world_init(t3_scene *scene) {
   size_t n; uint8_t *b = ds_asset("lab.glb", &n);
   if (!b) { ds_log("world: lab.glb missing"); return; }
@@ -151,6 +153,7 @@ void world_init(t3_scene *scene) {
   t3_object_traverse(lab, take_tris, NULL);
   build_grid();
   t3_object_add(&scene->base, lab);
+  build_leds(scene);
   ds_log("world: lab %d tris, %d cell refs", ntri, cell_start[GX * GZ]);
 }
 
@@ -351,4 +354,65 @@ int world_area_at(v3 p) {
 
 const char *world_area_name(int a) { return a >= 0 && a < LAB_AREA_N ? LAB_AREAS[a].name : ""; }
 
-void world_update(float dt, v3 player) { (void)dt; (void)player; }
+/* ── the LED cube on the robot counter ──
+ * The model's lights sat on top of the case (prep-lab drops them); here a 6 x 6 x 6
+ * grid of lit LEDs stands inside the glass, one instanced mesh, running through a
+ * few classic cube patterns: a rainbow wave, rain, a pulse from the centre, a
+ * sweeping plane. */
+#define LED_N 6
+static t3_instanced_mesh *leds;
+static float led_t;
+
+static void build_leds(t3_scene *scene) {
+  const lab_box_t *C = &LM_LED_CUBE[0];
+  float inset = 0.45f, cell = (fminf(C->max[0] - C->min[0], C->max[2] - C->min[2]) - 2 * inset) / (LED_N - 1);
+  float ch = (C->max[1] - C->min[1] - 2 * inset) / (LED_N - 1);
+  t3_material *m = t3_mesh_basic_material_new(0xffffff);
+  leds = t3_instanced_mesh_new(t3_box_geometry_new(0.16f, 0.16f, 0.16f, 1, 1, 1), m, LED_N * LED_N * LED_N);
+  for (int i = 0; i < LED_N * LED_N * LED_N; i++) {
+    int x = i % LED_N, y = (i / LED_N) % LED_N, z = i / (LED_N * LED_N);
+    t3_mat4 M;
+    t3_mat4_compose(&M, t3_v3(C->min[0] + inset + x * cell, C->min[1] + inset + y * ch, C->min[2] + inset + z * cell), t3_quat_identity(), t3_v3(1, 1, 1));
+    t3_instanced_mesh_set_matrix_at(leds, i, &M);
+    t3_instanced_mesh_set_color_at(leds, i, t3_color_hex(0x101420));
+  }
+  ((t3_object *)leds)->frustum_culled = false;
+  t3_object_add(&scene->base, leds);
+}
+
+static t3_color hue(float h, float v) {
+  h -= floorf(h);
+  float r = fabsf(h * 6 - 3) - 1, g = 2 - fabsf(h * 6 - 2), b = 2 - fabsf(h * 6 - 4);
+  t3_color c = {ds_clamp(r, 0, 1) * v, ds_clamp(g, 0, 1) * v, ds_clamp(b, 0, 1) * v};
+  return c;
+}
+
+void world_update(float dt, v3 player) {
+  (void)player;
+  if (!leds) return;
+  led_t += dt;
+  int pattern = (int)(led_t / 7.f) % 4;
+  float t = led_t;
+  for (int i = 0; i < LED_N * LED_N * LED_N; i++) {
+    int x = i % LED_N, y = (i / LED_N) % LED_N, z = i / (LED_N * LED_N);
+    float v = 0, h = 0.6f;
+    switch (pattern) {
+      case 0: v = 0.9f; h = (x + y + z) / 15.f - t * 0.25f; break;                       /* rainbow wave */
+      case 1: {                                                                            /* rain */
+        float drop = fmodf(t * 3.f + (float)((x * 7 + z * 13) % 11) * 0.53f, 7.f);
+        v = (LED_N - 1 - y) == (int)drop ? 1.f : (LED_N - 1 - y) == (int)drop - 1 ? 0.35f : 0;
+        h = 0.55f; break; }
+      case 2: {                                                                            /* a pulse from the centre */
+        float d = sqrtf((x - 2.5f) * (x - 2.5f) + (y - 2.5f) * (y - 2.5f) + (z - 2.5f) * (z - 2.5f));
+        float r = fmodf(t * 2.2f, 5.f);
+        v = fmaxf(0, 1 - fabsf(d - r) * 1.4f); h = 0.08f + d * 0.04f; break; }
+      default: {                                                                           /* a plane sweeping back and forth */
+        float p = (sinf(t * 1.6f) * 0.5f + 0.5f) * (LED_N - 1);
+        v = fmaxf(0, 1 - fabsf(x - p) * 1.2f); h = 0.3f + y * 0.05f; break; }
+    }
+    t3_color c = hue(h, v);
+    c.r = fmaxf(c.r, 0.05f); c.g = fmaxf(c.g, 0.06f); c.b = fmaxf(c.b, 0.09f);   /* an unlit LED still shows */
+    t3_instanced_mesh_set_color_at(leds, i, c);
+  }
+  if (leds->instance_color) leds->instance_color->version++;
+}

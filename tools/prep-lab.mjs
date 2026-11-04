@@ -16,7 +16,7 @@
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { FT, HOLE, moveFor, movePoint, carveFor, subtract, extras } from './lab-fixes.mjs';
+import { FT, HOLE, moveFor, movePoint, carveFor, dropFor, subtract, extras } from './lab-fixes.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const SCALE = 20;        // 1 m of lab is 20 game units: a 1.8 unit hero is 9 cm tall
@@ -77,6 +77,7 @@ for (const n of J.nodes) {
   for (const p of J.meshes[n.mesh].primitives) {
     const pos = read(p.attributes.POSITION);
     const idx = p.indices !== undefined ? read(p.indices) : Uint32Array.from({ length: pos.length / 3 }, (_, i) => i);
+    if (dropFor(n.name)) continue;
     if (isPrinter(n.name)) {
       if (!printers.has(n.name)) printers.set(n.name, box0());
       const b = printers.get(n.name);
@@ -132,7 +133,18 @@ for (const n of J.nodes) {
       /* not a box (the ground slab is the building's outline, extruded): clip its
        * triangles against each cut's footprint, which runs the full height */
       const bc = chunk(`b${band}`, -1), col = c.slice(0, 3);
+      /* the part's own vertices once, indexed; only triangles that reach into a cut's footprint
+       * are clipped (and come out as loose polygons) */
+      const vbase = bc.nv;
+      for (let i = 0; i < pos.length; i += 3) { bc.pos.push(pos[i] * SCALE, pos[i + 1] * SCALE, pos[i + 2] * SCALE); bc.col.push(...col); if (area) grow(areas.get(area), pos[i] * SCALE, pos[i + 1] * SCALE, pos[i + 2] * SCALE); }
+      bc.nv += pos.length / 3;
+      const touches = (t) => cuts.some((cut) => {
+        let x0 = 1e9, x1 = -1e9, z0 = 1e9, z1 = -1e9;
+        for (let j = 0; j < 3; j++) { const q = idx[t + j] * 3; x0 = Math.min(x0, pos[q] / FT); x1 = Math.max(x1, pos[q] / FT); z0 = Math.min(z0, pos[q + 2] / FT); z1 = Math.max(z1, pos[q + 2] / FT); }
+        return x1 > cut[0] && x0 < cut[3] && z1 > cut[1] && z0 < cut[4];
+      });
       for (let t = 0; t < idx.length; t += 3) {
+        if (!touches(t)) { bc.idx.push(vbase + idx[t], vbase + idx[t + 1], vbase + idx[t + 2]); continue; }
         let polys = [[0, 1, 2].map((j) => { const q = idx[t + j] * 3; return [pos[q] * SCALE, pos[q + 1] * SCALE, pos[q + 2] * SCALE]; })];
         for (const cut of cuts) polys = polys.flatMap((pl) => outsideRect(pl, cut[0] * K, cut[1] * K, cut[3] * K, cut[4] * K));
         for (const pl of polys) {

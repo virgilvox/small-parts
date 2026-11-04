@@ -27,6 +27,10 @@ export const MOVES = [
       (name === 'Supply closet door handle' && c[1] > 4.2)), hinge: [110.85, 6.7], deg: 80 },
 ];
 
+// parts the game draws itself: the LED cube's lights (the model's sit on top of the case; the
+// game builds a lit 6 x 6 x 6 grid inside it and animates it, world.c)
+export function dropFor(name) { return name === 'LED cube LEDs'; }
+
 export function moveFor(name, group, c) {
   for (const m of MOVES) if (m.match(name, group, c)) return m;
   return null;
@@ -41,8 +45,14 @@ export function movePoint(m, x, y) {
 
 // the model frames the hole but leaves the floor slabs whole over it (its viewer hides the
 // slabs to look into the basement): cut the hole through every slab, inside the frame
+// the hacker bay's deck is shut in by the storefront glass, the east wall and the pegboard
+// backdrop, which runs from the deck almost to the ceiling: a doorway through the backdrop at
+// deck height, between the cubby wall and the lock pick easel, with a ruler leaned up to it
+export const BAY_DOOR = [10.9, 25.85, 1.3, 11.5, 27.05, 2.65];
+const BAY_LAYERS = ['Hacker backdrop', 'Hacker backdrop peg holes', 'Caution tape', 'Caution tape stripes'];
 export function carveFor(name, group, mn, mx) {
   const over = (a0, a1, b0, b1) => a1 > b0 && a0 < b1;
+  if (BAY_LAYERS.includes(name) && over(mn[1], mx[1], BAY_DOOR[1], BAY_DOOR[4])) return [BAY_DOOR];
   if (group === 'slabs' && over(mn[0], mx[0], HOLE.x[0], HOLE.x[1]) && over(mn[1], mx[1], HOLE.y[0], HOLE.y[1]))
     return [[HOLE.x[0], HOLE.y[0], -5, HOLE.x[1], HOLE.y[1], 5]];
   return null;
@@ -68,7 +78,14 @@ export function subtract(b, h) {
 // jetpack can lift, so an old steel shelving unit lies dumped under the plate beside the gap.
 // Its shelves are a nine centimetre climb each; the top one sits just under the slab, its front
 // edge under the opening, so a jump and a burst of jetpack from there comes up through the gap.
-export function extras({ box }) {
+export function extras({ box, grid }) {
+  /* a wooden ruler leaned from the lab floor up to the bay doorway */
+  const r0 = 13.7, r1 = 11.36, h = 1.31, w0 = 26.0, w1 = 26.9;
+  grid(r1, w0, r0, w1, 6, 1, (x) => h * (r0 - x) / (r0 - r1) + 0.02, () => [222, 184, 74]);
+  for (let i = 0; i <= 12; i++) {   /* inch marks along one edge */
+    const x = r1 + (r0 - r1) * i / 12, z = h * (r0 - x) / (r0 - r1) + 0.03;
+    box([x - 0.012, w0, z, x + 0.012, w0 + (i % 6 ? 0.12 : 0.22), z + 0.006], [40, 34, 26]);
+  }
   const STEEL = [92, 98, 106], SHELF = [118, 124, 132];
   const x0 = 108.2, x1 = 110.4, y0 = 4.3, y1 = 6.4, floor = -7.71;   /* its front reaches under the gap */
   for (const [x, y] of [[x0, y0], [x1 - 0.12, y0], [x0, y1 - 0.12], [x1 - 0.12, y1 - 0.12]]) box([x, y, floor, x + 0.12, y + 0.12, -0.62], STEEL);
