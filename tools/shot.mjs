@@ -17,6 +17,7 @@
 // script.json entries, frame ranges inclusive:
 //   { "from": 0, "to": 30, "pad": 0, "buttons": ["A"], "lx": 0, "ly": -32767, "rx": 0, "ry": 0, "lt": 0, "rt": 32767 }
 //   { "from": 10, "to": 12, "keys": ["Enter", "KeyQ", "ArrowDown", "ShiftLeft"] }   keyboard (held over the range)
+//   { "from": 300, "to": 400, "pad": 1, "connected": false }   that pad unplugged over the range
 // sticks are -32767..32767 (y positive is down), triggers 0..32767.
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
@@ -108,6 +109,7 @@ for (let f = 0; f <= last; f++) {
     if (s.lt !== undefined) p.leftTrigger = s.lt;
     if (s.rt !== undefined) p.rightTrigger = s.rt;
     if (s.name !== undefined) p.name = s.name;
+    if (s.connected !== undefined) p.connected = s.connected;
   }
   const want = new Set();
   for (const s of script) if (s.keys && f >= s.from && f <= s.to) for (const k of s.keys) want.add(keyCode(k));

@@ -29,6 +29,9 @@ void hg_grad(float cx, float cy, float w, float h, float ang, uint32_t rgb, floa
 void hg_scope(float cx, float cy, float r);
 void hg_circle(float cx, float cy, float r, uint32_t rgb, float a);
 void hg_vignette(uint32_t rgb, float a, float inner);
+void hg_vignette_at(float cx, float cy, float rx, float ry, uint32_t rgb, float a, float inner);   /* about (cx, cy), radii rx, ry */
+void hg_clip(float x, float y, float w, float h);   /* draw only inside this rect (a half of the split screen) until hg_noclip */
+void hg_noclip(void);
 void hg_vgrad(float y0, float y1, uint32_t rgb, float a0, float a1);    /* full width, alpha a0 at y0 to a1 at y1 */
 void hg_stripes(float x, float y, float w, float h, uint32_t c1, float a1, uint32_t c2, float a2, float period, float scroll);
 void hg_halftone(float x, float y, float w, float h, uint32_t rgb, float a, float cell, bool flip);
@@ -68,6 +71,9 @@ float g_glyphs(cv *c, float x, float cy, float h, const char *spec, bool draw); 
 float g_markup(cv *c, float x, float base, int align, int font, float px, float ls, uint32_t col, float gh, bool pad, const char *s, bool draw);
 /* the controls diagram for one device: two columns of glyphs and names, 6 rows of row_h, returns its height */
 float ctl_panel(cv *c, float x, float y, float w, float row_h, bool pad, const char *title);
+
+/* "P2 PRESS START TO JOIN", right aligned at the top right, its top at y (hud.c) */
+void hud_join_hint(float y);
 
 /* screens (hud_screens.c) */
 void scr_title(const hud_t *h, float dt);

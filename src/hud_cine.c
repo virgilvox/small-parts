@@ -163,7 +163,7 @@ static void radio(const hud_t *h) {
   if (!h->radio_text || h->radio_t <= 0) { last = NULL; return; }
   double now = ds_now();
   if (h->radio_text != last) { last = h->radio_text; t0 = now; }
-  const float PW = 640, X = 40;
+  const float PW = 640, X = h->split ? (DS_W - PW) / 2 : 40;   /* two players: centred over the seam */
   float el = (float)(now - t0);
   float slide = ease_io(el / 0.28f), a = fminf(slide, ds_clamp(h->radio_t / 0.6f, 0, 1));
   uint32_t col = speaker_col(h->radio_speaker);
@@ -198,7 +198,7 @@ static void radio(const hud_t *h) {
   c = layer_begin(&L_rwave, 48, 48, 1);
   if (c) { radio_waves(c); layer_end(&L_rwave, c); }
   float ph = 38 + nl * 25 + 10;
-  float y = 556 - ph + (1 - slide) * 10, x = X - (1 - slide) * 40;
+  float y = (h->split ? 604 : 556) - ph + (1 - slide) * 10, x = X - (1 - slide) * 40;
   hg_tex(&L_rtext, x, y, a);
   hg_tex(&L_ricon, x + 14, y + 22, a);
   hg_tex(&L_rwave, x + 14, y + 22, a * (0.35f + 0.65f * (0.5f + 0.5f * sinf((float)now * 7))));

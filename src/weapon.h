@@ -1,5 +1,5 @@
 /* weapon.h: what a toy-sized hero can make from a hackerspace, and the
- * player's shots in flight (enemy shots are enemy.c's).
+ * players' shots in flight (enemy shots are enemy.c's).
  *
  *   WP_BANDS   rubber band repeater, laser-cut plywood: semi auto, endless
  *   WP_GLUE    hot glue gun: lobbed globs that stick, slow and burn plastic, leave puddles; glue sticks
@@ -37,16 +37,27 @@ typedef struct {
 } weapon_out_t;
 
 void weapon_init(t3_scene *scene);
-void weapon_reset(int level);           /* ammo for the level's start; which weapons it has found */
+/* each player has their own kit (weapons found, ammo, LiPos, the trigger and
+ * the swing); the calls below that read or change one act on the player last
+ * set (0 player 1, the default, 1 player 2). Shots, puddles and LiPos in
+ * flight are shared, and remember who let them go. */
+void weapon_set_player(int p);
+void weapon_reset(int level);           /* both kits: ammo for the level's start; which weapons it has found */
 void weapon_clear(void);                /* remove shots, puddles and LiPos in flight */
-void weapon_unlock(int w);              /* found it (missions call this) */
+void weapon_unlock(int w);              /* found it (missions call this): both players get it */
 bool weapon_unlocked(int w);
+/* a frame: weapon_tick once, weapon_update for each player in play (out is
+ * theirs, cleared first), then weapon_step once, which moves the shared
+ * shots and LiPos and adds what they hit to outs[the player who fired] */
+void weapon_tick(float dt);
 void weapon_update(float dt, const weapon_in_t *in, weapon_out_t *out);
+void weapon_step(float dt, weapon_out_t outs[2]);
+void weapon_cancel(void);               /* drop the coil's charge and the swing (the player went down) */
 int weapon_current(void);
 int weapon_ammo(int w);                 /* -1 = endless */
 int weapon_lipos(void);
 const char *weapon_name(int w);         /* "RUBBER BAND REPEATER" */
-void weapon_give(int pickup);           /* pickup_id (PK_HEALTH and PK_BATTERY are game.c's) */
+void weapon_give(int pickup);           /* pickup_id, to both players (PK_HEALTH and PK_BATTERY are game.c's) */
 /* glue puddles slow anything walking through them: 1 = full speed */
 float weapon_glue_slow(v3 at);
 

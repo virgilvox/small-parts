@@ -31,11 +31,15 @@ A third-person (or first-person, SELECT / C swaps) shooter for the HeatSync Labs
 
 Menus: stick, d-pad or arrows; A or Enter picks, B or Esc backs out; no menu wraps.
 
+Two players (drop-in co-op, `input.c`): player 1 is the keyboard and the first pad; player 2 is the second pad there (the first that is not player 1's), with the same pad layout. With one player any pad drives player 1, as before. START or A on a second pad joins: in play player 2 takes the other hero from the buddy where it stands, and on the title it sets PLAYERS to 2 (the title's SETTINGS panel has a PLAYERS 1 / 2 row; levels then start with two). While a second pad is there and nobody has joined, the HUD shows P2 PRESS START TO JOIN. Either pad pauses and works the menus. Player 2 leaves from the pause menu (LEAVE CO-OP, only with two players), or by unplugging; the buddy takes the hero back. A pad counts as there when the host flags it connected, or, for a host that flags only port 0, once it has pressed a button.
+
 ## The player
 
 - 100 HP. The jetpack battery: about three seconds of thrust from full, recharges on the ground after a short delay. Thrust climbs at 16 units/s² net; air control is better while jetting.
 - The dodge is 0.28 s of i-frames; in the air it is an air dash that costs battery.
 - The buddy (whichever hero the player did not pick) follows at the player's left shoulder, jets after them, shoots the nearest army man in sight (7 damage, rubber bands), and goes down for six seconds instead of dying.
+- Two players: player 2 drives the other hero by exactly the player's rules (movement, the jetpack, the dodge, the aim layer, their own camera with first person on SELECT, the coilgun's scope and zoom, every weapon, LiPos, the iron and interact, the army's damage). Each player has their own kit (weapon in hand, weapons found, ammo, LiPos, the trigger and the swing; `weapon_set_player`); weapons found and pickups go to both, a fresh battery to whoever walked through it. A player who runs out of HP is DOWN for six seconds on the floor, then gets up at the other's side with 60 HP; both down at once is the death screen and back to the checkpoint. Pickups, checkpoints, story triggers, objectives (plugs, props, crates, the charger hold) and each level's end go off for either player (`mission_set_second`). The game state keeps one `player_t` per hero (`PL[2]` in game.c): position, velocity, facing, the jetpack, the timers, HP, and the camera's yaw, pitch, fov, shake, view, scope and zoom.
+- Split screen: with two players the scene draws twice into the 480x270 target, player 1 in the left half and player 2 in the right, each 240x270 through its own camera (viewport and scissor, so the second render clears only its own half; `render_scene_split`), then the one PS1 pass. Particles are turned to each camera before its half (`fx_view`) and aged once after (`fx_age`). Each half has its own crosshair, health, battery, weapon and ammo, hit marker, hurt flash, interact prompt, scope and DOWN card; the objective, banners, the boss bar, the radio and the level card stay shared and centred.
 
 ## Weapons (weapon.c)
 
@@ -49,7 +53,7 @@ Everything is something you could make in a hackerspace, at toy scale.
 | SOLDERING IRON | X / E, a swing | 55, melts | endless | melee, 2 units of reach, a 90 degree arc |
 | LiPo pack | Y / Q, thrown | 60 in a 4 unit blast | 3 | puffs for 1.2 s, then pops |
 
-Pickups (mission.c places them, game.c and weapon.c apply them): electrical tape (35 HP to both heroes), a fresh battery (a full jetpack), glue sticks (+15), charge cells (+4), a LiPo (+1).
+Pickups (mission.c places them, game.c and weapon.c apply them): electrical tape (35 HP to both heroes), a fresh battery (a full jetpack for whoever takes it), glue sticks (+15), charge cells (+4), a LiPo (+1); with two players the ammo and LiPos go to both kits.
 
 ## The army (enemy.c)
 
@@ -87,11 +91,12 @@ Each level has 6 to 10 walkie beats (STORY.md), 2 to 4 checkpoints, pickups alon
 
 | File | Owns |
 |---|---|
-| `src/main.c`, `src/present.c` | wasmcart glue, the 480x270 target and the PS1 pass |
-| `src/game.c`, `game.h` | the state machine, the player, the buddy, the camera, scope, the glue between modules |
+| `src/main.c`, `src/present.c` | wasmcart glue, the 480x270 target (two halves for split screen) and the PS1 pass |
+| `src/game.c`, `game.h` | the state machine, the players (`PL[2]`), the buddy, the cameras, scope, joining and leaving, the glue between modules |
+| `src/input.c`, `input.h` | each player's intent from the pads and the keys, the second pad's join |
 | `src/world.c`, `world.h` | the lab mesh and its collision |
 | `src/hero.c`, `hero.h` | Moheeb and Luis: models, clips (anim.c), the aim layer, weapon props, the jetpack |
-| `src/weapon.c`, `weapon.h` | the player's weapons, shots, glue puddles, LiPos |
+| `src/weapon.c`, `weapon.h` | each player's kit, shots, glue puddles, LiPos |
 | `src/enemy.c`, `enemy.h` | the army and both bosses |
 | `src/mission.c`, `mission.h` | the six levels: starts, squads, pickups, objectives, walkie beats, exits |
 | `src/cutscene.c`, `cutscene.h` | the cutscenes and their staging |
@@ -107,5 +112,6 @@ Each level has 6 to 10 walkie beats (STORY.md), 2 to 4 checkpoints, pickups alon
 - Build: `./build.sh` (or `OUT=build-x ./build.sh` for your own tree, so parallel builds do not collide). The web player is only made for `OUT=build`.
 - Run headless: `node tools/shot.mjs <cart> <out prefix> <frames> [script.json]` (keys and pads in the script; see the top of the file). Look at the PNGs.
 - A line like `[cart] standard+vcol+fog+flat+ds+l1001` is a shader state the table lacks; collect them in a file and run `tools/regen.sh <file> [your OUT dir]` (it takes a lock and rebuilds).
-- `EXTRA_CFLAGS=-DDS_TRACE` logs the player and draw counts once a second.
+- `EXTRA_CFLAGS=-DDS_TRACE` logs the player and draw counts once a second (and player 2 with two players). Its test keys: 8 heals, 7, 6 and 5 move player 1 to the basement hatch; with two players 9 knocks player 2 down, 0 player 1, and 4 puts player 2 on the objective arrow.
+- Two players in the rig: script entries with `"pad": 1` drive the second pad (START joins); `"connected": false` unplugs a pad over a range. The rig passes all four pads connected unless told otherwise, so one-player runs show the join hint; `STATION=1` flags only pad 0, as the station's core may.
 - Style: C11, the comment density and naming of the surrounding code; no emdashes, no double dashes, no emoji in code, comments or strings; no real brand names in the game.

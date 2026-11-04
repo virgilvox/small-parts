@@ -155,6 +155,7 @@ kbd.m { background: #c9ccd1; box-shadow: inset 0 -3px 0 #8d9098; }
         <tr><td>WEAPON</td><td><kbd>1</kbd>-<kbd>4</kbd> <kbd>TAB</kbd> <kbd class="m">WHEEL</kbd></td><td><span class="pb t">LB</span> <span class="pb t">RB</span></td></tr>
         <tr><td>FIRST PERSON</td><td><kbd>C</kbd></td><td><span class="pb s">SELECT</span></td></tr>
         <tr><td>PAUSE</td><td><kbd>ESC</kbd> <kbd>P</kbd></td><td><span class="pb s">START</span></td></tr>
+        <tr><td>CO-OP</td><td colspan="2">Plug in a second controller and press <span class="pb s">START</span> to play as the other hero</td></tr>
       </table>
     </div>
     <div class="foot">Moheeb and Luis from COFFEE &amp; KILL. Army men by Quaternius (CC0). The lab is the HSL-108 model of HeatSync Labs, 108 West Main, Mesa. Moheeb and Luis voiced from their own recordings with Kyutai Pocket TTS (CC BY 4.0); the army by CMU Flite. Fonts under the OFL. Code MIT. Progress is saved in this browser. Drop a .wasc file anywhere on this page, or <button id="pick">open one</button>, to play a different cart.
@@ -339,29 +340,37 @@ window.addEventListener('mousemove', () => { if (locked) return; document.body.c
 /* ---------- gamepads (standard mapping), several merged into one ---------- */
 const BTN_MAP = [1, 2, 4, 8, 16, 32, 0, 0, 128, 64, 4096, 8192, 256, 512, 1024, 2048, 16384];
 const i16 = (v) => Math.round(Math.max(-1, Math.min(1, v)) * 32767);
-function readPads() {
+// Each gamepad is its own pad, so a second controller is player 2 in co-op (the
+// cart lets any pad drive player 1 when one person plays). The mouse rides on
+// pad 0 with the first gamepad: left button the right trigger, right button the
+// left trigger, wheel taps R and L.
+const pick = (cur, v) => (Math.abs(v) > Math.abs(cur) ? v : cur);
+function readPad(gp, withMouse) {
   const pad = { connected: true, buttons: 0, leftX: 0, leftY: 0, rightX: 0, rightY: 0, leftTrigger: 0, rightTrigger: 0 };
-  let gps = []; try { gps = navigator.getGamepads ? navigator.getGamepads() : []; } catch {}
   let lx = 0, ly = 0, rx = 0, ry = 0, lt = 0, rt = 0;
-  for (const gp of gps) {
-    if (!gp || !gp.connected) continue;
+  if (gp) {
     gp.buttons.forEach((b, i) => { if (b.pressed && BTN_MAP[i]) pad.buttons |= BTN_MAP[i]; });
-    // the strongest stick among all pads wins
-    const pick = (cur, v) => (Math.abs(v) > Math.abs(cur) ? v : cur);
-    lx = pick(lx, gp.axes[0] || 0); ly = pick(ly, gp.axes[1] || 0); rx = pick(rx, gp.axes[2] || 0); ry = pick(ry, gp.axes[3] || 0);
-    lt = Math.max(lt, gp.buttons[6] ? gp.buttons[6].value : 0); rt = Math.max(rt, gp.buttons[7] ? gp.buttons[7].value : 0);
+    lx = gp.axes[0] || 0; ly = gp.axes[1] || 0; rx = gp.axes[2] || 0; ry = gp.axes[3] || 0;
+    lt = gp.buttons[6] ? gp.buttons[6].value : 0; rt = gp.buttons[7] ? gp.buttons[7].value : 0;
   }
-  // mouse: left button is the right trigger, right button the left trigger, wheel taps R and L
-  if (mouseBtn & 1) rt = 1;
-  if (mouseBtn & 2) lt = 1;
-  if (wheelR > 0) { pad.buttons |= 32; wheelR--; }
-  if (wheelL > 0) { pad.buttons |= 16; wheelL--; }
-  mouseStick();
-  if (Math.abs(lookX) > Math.abs(rx)) rx = lookX;
-  if (Math.abs(lookY) > Math.abs(ry)) ry = lookY;
+  if (withMouse) {
+    if (mouseBtn & 1) rt = 1;
+    if (mouseBtn & 2) lt = 1;
+    if (wheelR > 0) { pad.buttons |= 32; wheelR--; }
+    if (wheelL > 0) { pad.buttons |= 16; wheelL--; }
+    mouseStick();
+    rx = pick(rx, lookX); ry = pick(ry, lookY);
+  }
   pad.leftX = i16(lx); pad.leftY = i16(ly); pad.rightX = i16(rx); pad.rightY = i16(ry);
   pad.leftTrigger = i16(lt); pad.rightTrigger = i16(rt);
-  return [pad];
+  return pad;
+}
+function readPads() {
+  let gps = []; try { gps = navigator.getGamepads ? navigator.getGamepads() : []; } catch {}
+  const live = [...gps].filter((gp) => gp && gp.connected).slice(0, 4);
+  const pads = [readPad(live[0], true)];
+  for (let i = 1; i < live.length; i++) pads.push(readPad(live[i], false));
+  return pads;
 }
 
 /* ---------- saves ---------- */

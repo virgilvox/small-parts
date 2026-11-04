@@ -161,7 +161,7 @@ static void play_objective(const hud_t *h) {
     p_text(c, F_DISPLAY, 22, 2, CV_LEFT, h->objective, 24, 56, C_CREAM, 1);
     layer_end(&L_obj, c);
   }
-  hg_tex(&L_obj, 40, 30, 1);
+  hg_tex(&L_obj, h->split ? 640 - w_obj / 2 : 40, h->split ? 24 : 30, 1);
 }
 
 static void play_stats(const hud_t *h) {
@@ -346,9 +346,8 @@ static void ticks_ring(float cx, float cy, float r, int n, float frac, uint32_t 
 
 /* the reticle follows the weapon: ticks for the repeater, a ring for glue, a diamond for the coil, a bracket for the iron;
  * a hit marker pops, the hurt arc points at where it came from */
-static void play_centre(const hud_t *h) {
-  const float cx = 640, cy = 360;
-  switch (h->weapon) {
+static void centre_at(float cx, float cy, int weapon, float charge, float hit_marker, bool hit_weak) {
+  switch (weapon) {
     case WP_GLUE:
       for (int i = 0; i < 12; i++) {
         float a = i * DS_PI / 6;
@@ -381,15 +380,15 @@ static void play_centre(const hud_t *h) {
   hg_rect_m(cx, cy, 8, 8, 0.785f, C_INK, 0.65f);
   hg_rect_m(cx, cy, 4, 4, 0.785f, C_HIVIS, 1);
   /* the coilgun's charge: a ring of ticks that fills, turns orange and pulses when it is ready */
-  if (h->weapon == WP_COIL && h->charge > 0.01f) {
-    bool full = h->charge >= 0.99f;
+  if (weapon == WP_COIL && charge > 0.01f) {
+    bool full = charge >= 0.99f;
     float pulse = full ? 0.5f + 0.5f * sinf((float)now_t * 24) : 0.f;
-    ticks_ring(cx, cy, 44, 40, h->charge, full ? C_HIVIS : C_TEAL, C_CREAM, 9 + 4 * pulse);
+    ticks_ring(cx, cy, 44, 40, charge, full ? C_HIVIS : C_TEAL, C_CREAM, 9 + 4 * pulse);
   }
-  if (h->hit_marker > 0) {
-    float k = ds_clamp(h->hit_marker / 0.25f, 0, 1), sc = 1 + 0.5f * k, a = ds_clamp(h->hit_marker / 0.1f, 0, 1);
-    uint32_t col = h->hit_weak ? C_HIVIS : C_CREAM;
-    float off = (h->hit_weak ? 24 : 19) * sc, len = h->hit_weak ? 16 : 12, th = h->hit_weak ? 5 : 3;
+  if (hit_marker > 0) {
+    float k = ds_clamp(hit_marker / 0.25f, 0, 1), sc = 1 + 0.5f * k, a = ds_clamp(hit_marker / 0.1f, 0, 1);
+    uint32_t col = hit_weak ? C_HIVIS : C_CREAM;
+    float off = (hit_weak ? 24 : 19) * sc, len = hit_weak ? 16 : 12, th = hit_weak ? 5 : 3;
     for (int i = 0; i < 4; i++) {
       float ang = DS_PI / 4 + i * DS_PI / 2, dx = sinf(ang), dy = -cosf(ang);
       hg_rect_m(cx + dx * off, cy + dy * off, th + 3, len + 3, ang, C_INK, 0.7f * a);
@@ -397,11 +396,12 @@ static void play_centre(const hud_t *h) {
     }
   }
 }
+static void play_centre(const hud_t *h) { centre_at(640, 360, h->weapon, h->charge, h->hit_marker, h->hit_weak); }
 
-static void hurt_fx(const hud_t *h) {
-  if (h->hurt <= 0) return;
-  float k = ds_clamp(h->hurt / 0.5f, 0, 1);
-  hg_vignette(C_ALERT, 0.62f * k, 0.45f);
+static void hurt_at(float cx, float cy, float rx, float hurt, float angle) {
+  if (hurt <= 0) return;
+  float k = ds_clamp(hurt / 0.5f, 0, 1);
+  hg_vignette_at(cx, cy, rx, 509, C_ALERT, 0.62f * k, 0.45f);
   cv *c = layer_begin(&L_arc, 360, 120, 1);
   if (c) {   /* an arc of a ring around the screen centre, drawn about a point below the layer */
     cv_save(c);
@@ -414,13 +414,16 @@ static void hurt_fx(const hud_t *h) {
     cv_restore(c);
     layer_end(&L_arc, c);
   }
-  float m[6]; mat_place(m, 640, 360, h->hurt_angle, 180, 290, 1, 1);
+  float sc = fminf(1, rx / 640);
+  float m[6]; mat_place(m, cx, cy, angle, 180, 290, sc, sc);
   hg_tex_m(&L_arc, m, k, 0xffffff);
 }
+static void hurt_fx(const hud_t *h) { hurt_at(640, 360, 905, h->hurt, h->hurt_angle); }
 
 /* ── the objective arrow ── */
-static void objective_marker(const hud_t *h) {
-  if (!h->marker_on) return;
+/* the arrow over a part of the screen ox..ox+w wide; positions in that part's own pixels */
+static void marker_at(float ox, float w, layer_t *Ld, bool on_, float mxp, float myp, bool behind, float dist) {
+  if (!on_) return;
   cv *c = layer_begin(&L_mark, 64, 64, 1);
   if (c) {   /* a diamond with a ring: the place itself */
     cv_stroke_hex(c, C_INK, 0.8f); cv_line_width(c, 8);
@@ -438,37 +441,38 @@ static void objective_marker(const hud_t *h) {
     cv_fill_hex(c, C_HIVIS, 1); cv_fill(c);
     layer_end(&L_marrow, c);
   }
-  int cm = (int)(h->marker_dist * 5.f + 2.5f) / 5 * 5;   /* units * 5 = centimetres, steady in fives */
+  int cm = (int)(dist * 5.f + 2.5f) / 5 * 5;   /* units * 5 = centimetres, steady in fives */
   char b[24]; snprintf(b, sizeof b, "%d CM", cm);
-  c = layer_begin(&L_mdist, 140, 28, hash_str(b, 77));
+  c = layer_begin(Ld, 140, 28, hash_str(b, 77));
   if (c) {
     p_plate(c, 0, 0, 140, 28, 7, C_INK, 0.85f);
     p_text(c, F_MONO, 17, 0, CV_CENTER, b, 70, 20, C_CREAM, 1);
-    layer_end(&L_mdist, c);
+    layer_end(Ld, c);
   }
   float pulse = 1 + 0.06f * sinf((float)now_t * 5);
-  const float mx0 = 70, my0 = 120, mx1 = DS_W - 70, my1 = DS_H - 140;   /* keep clear of the plates */
-  float dx = h->marker_x - 640, dy = h->marker_y - 360;
-  bool off = h->marker_behind || h->marker_x < mx0 || h->marker_x > mx1 || h->marker_y < my0 || h->marker_y > my1;
+  const float hw = w * 0.5f;
+  const float mx0 = 70, my0 = 120, mx1 = w - 70, my1 = DS_H - 140;   /* keep clear of the plates */
+  float dx = mxp - hw, dy = myp - 360;
+  bool off = behind || mxp < mx0 || mxp > mx1 || myp < my0 || myp > my1;
   float px, py;
   if (!off) {
-    px = h->marker_x; py = h->marker_y;
-    float m[6]; mat_place(m, px, py, 0, 32, 32, pulse, pulse);
-    hg_tex_m(&L_mark, m, 1, 0xffffff);
+    px = mxp; py = myp;
   } else {
-    if (h->marker_behind) { dx = -dx; dy = -dy; }
+    if (behind) { dx = -dx; dy = -dy; }
     if (fabsf(dx) < 1 && fabsf(dy) < 1) dy = 1;   /* straight behind: point down */
-    float hx = 640 - mx0, hy = (dy > 0 ? my1 : my0) - 360;
+    float hx = hw - mx0, hy = (dy > 0 ? my1 : my0) - 360;
     float sx = fabsf(dx) > 0.001f ? hx / fabsf(dx) : 1e9f, sy = fabsf(hy) / fmaxf(fabsf(dy), 0.001f);
     float s = fminf(sx, sy);
-    px = 640 + dx * s; py = 360 + dy * s;
+    px = hw + dx * s; py = 360 + dy * s;
     float ang = atan2f(dx, -dy);
-    float m[6]; mat_place(m, px, py, ang, 32, 32, pulse, pulse);
+    float m[6]; mat_place(m, ox + px, py, ang, 32, 32, pulse, pulse);
     hg_tex_m(&L_marrow, m, 1, 0xffffff);
   }
+  if (!off) { float m[6]; mat_place(m, ox + px, py, 0, 32, 32, pulse, pulse); hg_tex_m(&L_mark, m, 1, 0xffffff); }
   float ly = py + (off ? (py > 360 ? -62.f : 38.f) : 34.f);
-  hg_tex(&L_mdist, px - 70, ly, 0.95f);
+  hg_tex(Ld, ox + px - 70, ly, 0.95f);
 }
+static void objective_marker(const hud_t *h) { marker_at(0, DS_W, &L_mdist, h->marker_on, h->marker_x, h->marker_y, h->marker_behind, h->marker_dist); }
 
 /* ── scope ── */
 static void scope_layers(void) {
@@ -606,6 +610,181 @@ static void scope_draw(const hud_t *h) {
   segs(1, 40, 520, 200, 12, 20);
 }
 
+/* ── two players: a half each ──
+ * Player 1 on the left, player 2 on the right, each half its own crosshair,
+ * vitals, kit, prompt, scope and DOWN card in the same shop-label look, drawn
+ * clipped to the half. The objective, banners, the boss bar and the radio
+ * stay shared, centred across the screen. */
+static layer_t L_svit[2], L_swpn[2], L_sprompt[2], L_sdown[2], L_sread[2], L_smdist[2], L_join;
+static float sp_health[2], sp_trail[2], sp_jet[2];
+static double sp_scope_t0[2]; static bool sp_was_scoped[2];
+
+/* name, health and the jetpack battery: a plate in the half's bottom left */
+static void half_vitals(int i, const hud_player_t *p, float ox) {
+  const float x = ox + 24, y = 616, w = 300, hh = 80;
+  char tag[40]; snprintf(tag, sizeof tag, "P%d  %s", i + 1, p->name ? p->name : "");
+  cv *c = layer_begin(&L_svit[i], (int)w, (int)hh, hash_str(tag, 61));
+  if (c) {
+    p_plate(c, 0, 0, w, hh, 14, C_INK, 0.86f);
+    p_hazard(c, 0, 14, 8, hh - 14, 12, i ? C_TEAL : C_HIVIS, C_INK);
+    p_tape(c, 20, 8, 20, F_DISPLAY, 13, 3, tag, C_CREAM, C_INK);
+    p_tape(c, 218, 8, 18, F_DISPLAY, 11, 2, "JET", C_TEAL, C_INK);
+    layer_end(&L_svit[i], c);
+  }
+  hg_tex(&L_svit[i], x, y, 1);
+  float t = (float)(now_t * 9);
+  bool low = sp_health[i] < 0.28f;
+  uint32_t hc = low ? (sinf(t) > 0 ? C_ALERT : 0xff8a7a) : C_HIVIS;
+  bar(x + 20, y + 46, 182, 12, sp_health[i], sp_trail[i], hc, C_CREAM);
+  segs(2, x + 20, y + 46, 182, 12, 18.2f);
+  bool jlow = sp_jet[i] < 0.25f, flash = jlow && sinf(t * 1.3f) > 0;
+  battery(x + 218, y + 34, 64, 34, sp_jet[i], jlow ? C_ALERT : C_TEAL, flash ? C_ALERT : C_CREAM, p->jetting ? 0.6f + 0.4f * sinf(t * 2) : 0);
+}
+
+/* the weapon, its ammo, the four slots as ticks and the LiPos: a plate in the half's bottom right */
+static void half_weapon(int i, const hud_player_t *p, float ox) {
+  const float w = 280, hh = 80, x = ox + 640 - 24 - w, y = 616;
+  int own = 0; for (int k = 0; k < 4; k++) own |= p->owned[k] << k;
+  uint32_t key = (uint32_t)p->weapon | (uint32_t)(p->ammo + 1) << 4 | (uint32_t)(p->lipos & 15) << 16 | (uint32_t)own << 20 | (uint32_t)p->used_pad << 24;
+  key = hash_str(p->weapon_name, key);
+  cv *c = layer_begin(&L_swpn[i], (int)w, (int)hh, key);
+  if (c) {
+    p_plate(c, 0, 0, w, hh, 14, C_INK, 0.86f);
+    p_hazard(c, w - 8, 0, 8, hh - 14, 12, C_HIVIS, C_INK);
+    p_tape(c, 14, 8, 20, F_DISPLAY, 12, 2, p->weapon_name ? p->weapon_name : "WEAPON", C_HIVIS, C_INK);
+    for (int k = 0; k < WP_COUNT; k++) {   /* the slots: cream for the one in hand, orange for found, dark for not yet */
+      bool sel = p->weapon == k, own_k = p->owned[k];
+      cv_fill_hex(c, sel ? C_CREAM : own_k ? C_HIVIS : 0x2a2f3c, 1);
+      cv_fill_rect(c, 16 + k * 26, 36, 22, sel ? 7 : 4);
+    }
+    if (p->ammo < 0) p_text(c, F_DISPLAY, 18, 2, CV_LEFT, "ENDLESS", 16, 70, C_CREAM, 1);
+    else {
+      char b[16]; snprintf(b, sizeof b, "%02d", p->ammo);
+      p_text(c, F_DISPLAY, 28, 1, CV_LEFT, b, 16, 72, p->ammo ? C_CREAM : C_ALERT, 1);
+      p_text(c, F_MONO, 11, 0, CV_LEFT, AMMO_LABEL[p->weapon >= 0 && p->weapon < WP_COUNT ? p->weapon : 0], 62, 68, 0x9aa1b2, 1);
+    }
+    g_markup(c, w - 18, 46, CV_RIGHT, F_MONO, 12, 0, 0x9aa1b2, 16, p->used_pad, "{LIPO}", true);
+    int n = p->lipos < 5 ? p->lipos : 5;
+    for (int k = 0; k < 5; k++) {
+      float px_ = w - 20 - 5 * 17 + k * 17, py = 56;
+      if (k < n) {
+        cv_fill_hex(c, C_HIVIS, 1); cv_fill_rect(c, px_, py + 3, 13, 11);
+        cv_fill_hex(c, C_INK, 1); cv_fill_rect(c, px_ + 3, py, 7, 4); cv_fill_rect(c, px_ + 5, py + 6, 3, 5);
+      } else { cv_stroke_hex(c, 0x586070, 1); cv_line_width(c, 1.5f); cv_begin(c); cv_rect(c, px_ + 0.75f, py + 3.75f, 11.5f, 9.5f); cv_stroke(c); }
+    }
+    layer_end(&L_swpn[i], c);
+  }
+  hg_tex(&L_swpn[i], x, y, 1);
+}
+
+/* the interact prompt under this half's crosshair */
+static void half_prompt(int i, const hud_player_t *p, float ox) {
+  if (!p->prompt || !p->prompt[0]) return;
+  char s[120]; snprintf(s, sizeof s, "{IRON} %s", p->prompt);
+  cv *c = layer_begin(&L_sprompt[i], 600, 70, hash_str(s, (uint32_t)p->used_pad + 43));
+  if (c) {
+    float w = g_markup(c, 0, 0, CV_LEFT, F_DISPLAY, 26, 3, C_CREAM, 38, p->used_pad, s, false);
+    float pw = fminf(590, w + 48);
+    p_plate(c, 300 - pw / 2, 4, pw, 60, 12, C_INK, 0.92f);
+    p_hazard(c, 300 - pw / 2, 4, pw, 6, 12, C_HIVIS, C_INK);
+    p_hazard(c, 300 - pw / 2, 58, pw, 6, 12, C_HIVIS, C_INK);
+    g_markup(c, 300, 46, CV_CENTER, F_DISPLAY, 26, 3, C_CREAM, 38, p->used_pad, s, true);
+    layer_end(&L_sprompt[i], c);
+  }
+  float pulse = 1 + 0.05f * sinf((float)now_t * 8);
+  float m[6]; mat_place(m, ox + 320, 440, 0, 300, 34, pulse, pulse);
+  hg_tex_m(&L_sprompt[i], m, 0.8f + 0.2f * sinf((float)now_t * 8), 0xffffff);
+}
+
+/* the coilgun's scope in a half: a smaller lens, its readouts in one strip under it */
+static void half_scope(int i, const hud_player_t *p, float ox) {
+  int zoom = (int)ds_clamp((float)p->zoom, 1, 3);
+  if (!sp_was_scoped[i]) sp_scope_t0[i] = now_t;
+  sp_was_scoped[i] = true;
+  const float cx = ox + 320, cy = 340, R0 = 270, k = R0 / 330;
+  float age = (float)(now_t - sp_scope_t0[i]);
+  float R = R0 + 420 * (1 - hud_ease_out(age / 0.18f));
+  hg_circle(cx, cy, R, C_ALERT, p->on_enemy ? 0.14f : 0);
+  hg_scope(cx, cy, R < R0 ? R0 : R);
+  float sc = R > R0 ? R / 330 : k;
+  float m[6]; mat_place(m, cx, cy, 0, 360, 360, sc, sc);
+  hg_tex_m(&L_ret[zoom - 1], m, ds_clamp(age / 0.12f, 0, 1), p->on_enemy ? C_ALERT : 0xffffff);
+  if (p->charge > 0.01f) {
+    bool full = p->charge >= 0.99f;
+    ticks_ring(cx, cy, 300 * k, 72, p->charge, full ? C_HIVIS : C_TEAL, 0x000000, 12);
+  }
+  float pulse = 0.5f + 0.5f * sinf((float)now_t * 10);
+  if (p->on_weak) { float s = 1.1f + 0.15f * pulse; float mm[6]; mat_place(mm, cx, cy, 0, 48, 48, s, s); hg_tex_m(&L_brk, mm, 1, 0xffffff); }
+  if (p->weak_mark) { float s = 0.7f + 0.1f * pulse; float mm[6]; mat_place(mm, ox + p->weak_x, p->weak_y - 20, 0, 48, 48, s, s); hg_tex_m(&L_brk, mm, 0.9f, 0xffffff); }
+  int cm = (int)(p->range * 5.f + 0.5f);
+  char rb[24]; if (p->range > 0.1f) snprintf(rb, sizeof rb, "%d CM", cm); else snprintf(rb, sizeof rb, "...");
+  char b[64]; snprintf(b, sizeof b, "%dX|%s|%02d", 1 << zoom, rb, p->ammo < 0 ? 0 : p->ammo);
+  cv *c = layer_begin(&L_sread[i], 440, 44, hash_str(b, (uint32_t)p->on_enemy << 1 | (uint32_t)p->on_weak << 2 | (uint32_t)p->used_pad << 3));
+  if (c) {
+    p_plate(c, 0, 0, 440, 44, 10, C_INK, 0.92f);
+    char zb[8]; snprintf(zb, sizeof zb, "%dX", 1 << zoom);
+    float x = 12 + p_tape(c, 12, 11, 22, F_DISPLAY, 15, 2, zb, C_HIVIS, C_INK) + 10;
+    p_text(c, F_MONO, 15, 0, CV_LEFT, "RANGE", x, 28, 0x9aa1b2, 1);
+    p_text(c, F_DISPLAY, 17, 1, CV_LEFT, rb, x + 56, 29, C_CREAM, 1);
+    char cb[16]; snprintf(cb, sizeof cb, "CELLS %02d", p->ammo < 0 ? 0 : p->ammo);
+    if (p->on_enemy) p_tape(c, 300, 11, 22, F_DISPLAY, 12, 2, p->on_weak ? "WEAK POINT" : "ARMY MAN", p->on_weak ? C_HIVIS : C_ALERT, p->on_weak ? C_INK : C_CREAM);
+    else p_text(c, F_MONO, 14, 0, CV_RIGHT, cb, 428, 28, p->ammo ? C_TEAL : C_ALERT, 1);
+    layer_end(&L_sread[i], c);
+  }
+  hg_tex(&L_sread[i], ox + 100, 634, 1);
+  bar(ox + 100, 690, 160, 10, sp_health[i], sp_trail[i], sp_health[i] < 0.28f && sinf((float)now_t * 9) > 0 ? C_ALERT : C_HIVIS, C_CREAM);
+}
+
+/* down: the half goes dim and red, a card counts the seconds until they get up */
+static void half_down(int i, const hud_player_t *p, float ox) {
+  hg_rect(ox, 0, 640, DS_H, C_INK, 0.42f);
+  hg_vignette_at(ox + 320, 360, 452, 509, C_ALERT, 0.55f, 0.3f);
+  int secs = (int)ceilf(p->down);
+  cv *c = layer_begin(&L_sdown[i], 420, 150, (uint32_t)secs + 7);
+  if (c) {
+    p_plate(c, 0, 0, 420, 150, 18, C_INK, 0.92f);
+    p_hazard(c, 0, 0, 420, 9, 14, C_ALERT, C_INK);
+    p_text(c, F_DISPLAY, 72, 6, CV_CENTER, "DOWN", 213, 92, 0x000000, 0.5f);
+    p_text(c, F_DISPLAY, 72, 6, CV_CENTER, "DOWN", 210, 88, C_CREAM, 1);
+    char b[32]; snprintf(b, sizeof b, "BACK UP IN %d", secs);
+    p_text(c, F_MONO, 20, 2, CV_CENTER, b, 210, 128, C_HIVIS, 1);
+    layer_end(&L_sdown[i], c);
+  }
+  float s = 1 + 0.04f * sinf((float)now_t * 4);
+  float m[6]; mat_place(m, ox + 320, 330, -0.03f, 210, 75, s, s);
+  hg_tex_m(&L_sdown[i], m, 1, 0xffffff);
+}
+
+static void play_split(const hud_t *h) {
+  for (int i = 0; i < 2; i++) {
+    const hud_player_t *p = &h->pl[i];
+    float ox = i * 640.f;
+    hg_clip(ox, 0, 640, DS_H);
+    if (p->down > 0) { half_down(i, p, ox); half_vitals(i, p, ox); hg_noclip(); continue; }
+    if (p->scoped) { half_scope(i, p, ox); hurt_at(ox + 320, 360, 452, p->hurt, p->hurt_angle); hg_noclip(); continue; }
+    sp_was_scoped[i] = false;
+    centre_at(ox + 320, 360, p->weapon, p->charge, p->hit_marker, p->hit_weak);
+    marker_at(ox, 640, &L_smdist[i], p->marker_on, p->marker_x, p->marker_y, p->marker_behind, p->marker_dist);
+    hurt_at(ox + 320, 360, 452, p->hurt, p->hurt_angle);
+    half_vitals(i, p, ox);
+    half_weapon(i, p, ox);
+    half_prompt(i, p, ox);
+    hg_noclip();
+  }
+}
+
+/* one player, a second pad there: how to drop in */
+void hud_join_hint(float y) {
+  cv *c = layer_begin(&L_join, 320, 34, 3);
+  if (c) {
+    float w = g_markup(c, 0, 0, CV_LEFT, F_MONO, 14, 1, C_CREAM, 22, true, "P2 PRESS {=START} TO JOIN", false);
+    p_plate(c, 320 - w - 28, 0, w + 28, 34, 8, C_INK, 0.8f);
+    g_markup(c, 306, 23, CV_RIGHT, F_MONO, 14, 1, C_CREAM, 22, true, "P2 PRESS {=START} TO JOIN", true);
+    layer_end(&L_join, c);
+  }
+  hg_tex(&L_join, 1240 - 320, y, 0.6f + 0.3f * (0.5f + 0.5f * sinf((float)now_t * 3)));
+}
+
 #ifdef SP_HUD_DEMO
 /* build with EXTRA_CFLAGS=-DSP_HUD_DEMO: fills the play HUD with sample values so it can be shot without a level.
  * Options: -DSP_HUD_DEMO_PAD (pad prompts), -DSP_HUD_LEVEL=n (0 shows level 1's first-time prompts),
@@ -665,12 +844,31 @@ void hud_draw(const hud_t *hin) {
   s_boss = ds_damp(s_boss, h->boss_health, 14, dt_);
   s_boss_trail = s_boss_trail > s_boss ? fmaxf(s_boss, s_boss_trail - 0.25f * dt_) : s_boss;
   if (h->mode != HUD_PLAY && h->mode != HUD_PAUSE) { s_health = s_trail = h->health; s_buddy = h->buddy_health; s_jet = h->jet; }
+  for (int i = 0; i < 2; i++) {
+    const hud_player_t *p = &h->pl[i];
+    sp_health[i] = ds_damp(sp_health[i], p->health, 14, dt_);
+    sp_jet[i] = ds_damp(sp_jet[i], p->jet, 16, dt_);
+    sp_trail[i] = sp_trail[i] > sp_health[i] ? fmaxf(sp_health[i], sp_trail[i] - 0.35f * dt_) : sp_health[i];
+    if (h->mode != HUD_PLAY && h->mode != HUD_PAUSE) { sp_health[i] = sp_trail[i] = p->health; sp_jet[i] = p->jet; }
+    if (h->mode != HUD_PLAY) sp_was_scoped[i] = false;
+  }
 
   hg_begin();
+  if (h->split) {   /* the seam between the halves */
+    hg_rect(DS_W / 2 - 4, 0, 8, DS_H, C_INK, 1);
+    hg_rect(DS_W / 2 - 1, 0, 2, DS_H, C_HIVIS, 0.7f);
+  }
   switch (h->mode) {
     case HUD_TITLE: scr_title(h, dt_); break;
     case HUD_INTRO: scr_intro(h); break;
     case HUD_PLAY:
+      if (h->split) {
+        play_split(h);
+        play_objective(h);
+        if (h->boss) play_boss(h);
+        play_banner(h);
+        break;
+      }
       if (h->scoped) { scope_draw(h); hurt_fx(h); play_banner(h); break; }
       play_centre(h);
       objective_marker(h);
@@ -681,6 +879,7 @@ void hud_draw(const hud_t *hin) {
       play_strip(h);
       { bool w = play_wcard(h), l = play_lowjet(h); if (!w && !l) play_firsttime(h); }
       play_interact(h);
+      if (h->join_hint) hud_join_hint(104);
       break;
     case HUD_PAUSE: scr_pause(h); break;
     case HUD_DEAD: scr_dead(h); break;

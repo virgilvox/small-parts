@@ -20,6 +20,8 @@ extern ds_save_t DS_SAVE;
 
 extern t3_renderer *DS_R;
 void render_scene(t3_scene *scene, t3_camera *cam);   /* into the frame target */
+/* two-player split screen: left and right halves, before(i) called ahead of each */
+void render_scene_split(t3_scene *scene, t3_camera *left, t3_camera *right, void (*before)(int));
 void render_target(void);                             /* bind the frame target (for raw GL overlays) */
 void render_clear(uint32_t rgb);
 

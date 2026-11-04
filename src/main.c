@@ -168,6 +168,28 @@ void render_scene(t3_scene *scene, t3_camera *cam) {
   glBindFramebuffer(GL_FRAMEBUFFER, fbo);
   glViewport(0, 0, DS_W, DS_H);
 }
+/* two players: each camera into its half of the low target (viewport and scissor
+ * so the second render clears and draws only its own half), then the one PS1 pass.
+ * before(i) runs ahead of each half (the HUD's particles face that camera) */
+void render_scene_split(t3_scene *scene, t3_camera *left, t3_camera *right, void (*before)(int)) {
+  t3_renderer_set_framebuffer(DS_R, low_fbo);
+  const int hw = DS_LOW_W / 2;
+  for (int i = 0; i < 2; i++) {
+    if (before) before(i);
+    t3_renderer_set_viewport(DS_R, i * hw, 0, hw, DS_LOW_H);
+    t3_renderer_set_scissor(DS_R, i * hw, 0, hw, DS_LOW_H);
+    t3_renderer_set_scissor_test(DS_R, true);
+    t3_renderer_render(DS_R, scene, i ? right : left);
+  }
+  t3_renderer_set_scissor_test(DS_R, false);
+  t3_renderer_set_viewport(DS_R, 0, 0, DS_LOW_W, DS_LOW_H);
+  t3_renderer_set_scissor(DS_R, 0, 0, DS_LOW_W, DS_LOW_H);
+  t3_renderer_reset_bindings(DS_R);
+  present_retro(low_color, DS_LOW_W, DS_LOW_H, fbo, DS_W, DS_H);
+  t3_renderer_reset_bindings(DS_R);
+  glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+  glViewport(0, 0, DS_W, DS_H);
+}
 void render_target(void) {
   glBindFramebuffer(GL_FRAMEBUFFER, fbo);
   glViewport(0, 0, DS_W, DS_H);

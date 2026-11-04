@@ -34,7 +34,7 @@ static const char *FS =
   /* scope: black outside the lens, a soft dark rim just inside it */
   "  else if (mode == 2) { float d = length(vpx - prm.xy); float out_ = smoothstep(prm.z - 1.5, prm.z + 0.5, d);\n"
   "    float rim = 0.55 * smoothstep(prm.z * 0.62, prm.z, d); o = vec4(0.0, 0.0, 0.0, max(out_, rim * (1.0 - out_))); }\n"
-  "  else if (mode == 3) { vec2 d = (vpx - vec2(640.0, 360.0)) / vec2(905.0, 509.0); float t = smoothstep(prm.x, 1.0, length(d));\n"
+  "  else if (mode == 3) { vec2 d = (vpx - prm.yz) / col2.xy; float t = smoothstep(prm.x, 1.0, length(d));\n"
   "    o = pm(vec4(col.rgb, col.a * t)); }\n"
   "  else if (mode == 4) { float s = fract((vpx.x + vpx.y) / prm.x + prm.y); vec4 c = s < 0.5 ? col : col2; o = pm(c); }\n"
   /* halftone: dots on a 45 degree grid, bigger toward the bottom (or the top when flipped) */
@@ -214,11 +214,17 @@ void hg_circle(float cx, float cy, float r, uint32_t rgb, float a) {
   col4(u_col, rgb, a); glUniform4f(u_prm, cx, cy, r, 0);
   quad(6, 0, 0, DS_W, DS_H);
 }
-void hg_vignette(uint32_t rgb, float a, float inner) {
+void hg_vignette(uint32_t rgb, float a, float inner) { hg_vignette_at(640, 360, 905, 509, rgb, a, inner); }
+void hg_vignette_at(float cx, float cy, float rx, float ry, uint32_t rgb, float a, float inner) {
   if (a <= 0) return;
-  col4(u_col, rgb, a); glUniform4f(u_prm, inner, 0, 0, 0);
+  col4(u_col, rgb, a); glUniform4f(u_col2, rx, ry, 0, 0); glUniform4f(u_prm, inner, cx, cy, 0);
   quad(3, 0, 0, DS_W, DS_H);
 }
+void hg_clip(float x, float y, float w, float h) {
+  glEnable(GL_SCISSOR_TEST);
+  glScissor((int)x, (int)(DS_H - y - h), (int)w, (int)h);
+}
+void hg_noclip(void) { glDisable(GL_SCISSOR_TEST); }
 void hg_stripes(float x, float y, float w, float h, uint32_t c1, float a1, uint32_t c2, float a2, float period, float scroll) {
   col4(u_col, c1, a1); col4(u_col2, c2, a2); glUniform4f(u_prm, period, scroll, 0, 0);
   quad(4, x, y, w, h);

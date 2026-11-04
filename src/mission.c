@@ -68,6 +68,7 @@ static struct {
 
 static t3_object *root;
 static char objective_buf[64], banner_buf[48];
+static bool sec_on; static v3 sec_pos;   /* the second player, two-player mode (mission_set_second) */
 
 /* ── places ── */
 static v3 lm_c(const lab_box_t *b) { return v3_((b->min[0] + b->max[0]) * 0.5f, b->max[1], (b->min[2] + b->max[2]) * 0.5f); }
@@ -1104,6 +1105,7 @@ v3 mission_start(int level, float *yaw) {
 }
 
 v3 mission_checkpoint(void) { return M.check; }
+void mission_set_second(bool on, v3 pos) { sec_on = on; sec_pos = pos; }
 
 /* ── the update ── */
 static bool in_zone(const trig_t *t, v3 p) { return p.x >= t->x0 && p.x <= t->x1 && p.z >= t->z0 && p.z <= t->z1; }
@@ -1171,7 +1173,7 @@ static void objective(mission_out_t *o, v3 player) {
       if (player.y < BASEMENT->max[1] - 1) { o->objective = "CLIMB OUT THE HATCH"; mk = hatch_gap(); lift = false; break; }
       if (!M.charging) o->objective = "PLUG IN THE CHARGER";
       else {
-        snprintf(objective_buf, sizeof objective_buf, by_charger(player) ? "HOLD THE KITCHEN %d%%" : "GET BACK TO THE CHARGER %d%%", (int)(M.charge * 100 / CHARGE_S));
+        snprintf(objective_buf, sizeof objective_buf, by_charger(player) || (sec_on && by_charger(sec_pos)) ? "HOLD THE KITCHEN %d%%" : "GET BACK TO THE CHARGER %d%%", (int)(M.charge * 100 / CHARGE_S));
         o->objective = objective_buf;
       }
       lift = false;
@@ -1236,14 +1238,21 @@ static bool level_done(v3 p) {
 void mission_update(float dt, v3 player, mission_out_t *out) {
   M.t += dt;
   out->radio_beat = out->pickup = out->weapon_found = -1;
-  out->banner = NULL; out->checkpoint = false; out->done = false; out->boss_arena = false; out->prompt = NULL;
-  /* the arena: the woodshop (the Sergeant), the machine shop entered from the metal fab bay (the General) */
-  if (M.level == LV_WOODSHOP && player.x > AR(AREA_WOODSHOP)->min[0] + 1 && player.z > AR(AREA_WOODSHOP)->min[2] - 2) M.arena = true;
-  if (M.level == LV_MACHINE && player.x < AR(AREA_MACHINE_SHOP)->max[0] - 22) M.arena = true;
+  out->banner = NULL; out->checkpoint = false; out->done = false; out->boss_arena = false; out->prompt = out->prompt2 = NULL;
+  out->taker = 0;
+  /* the players: the one given, and the second in two-player mode; every check below is either's */
+  v3 who[2] = {player, sec_pos};
+  int nwho = sec_on ? 2 : 1;
+  for (int w = 0; w < nwho; w++) {
+    v3 pl = who[w];
+    /* the arena: the woodshop (the Sergeant), the machine shop entered from the metal fab bay (the General) */
+    if (M.level == LV_WOODSHOP && pl.x > AR(AREA_WOODSHOP)->min[0] + 1 && pl.z > AR(AREA_WOODSHOP)->min[2] - 2) M.arena = true;
+    if (M.level == LV_MACHINE && pl.x < AR(AREA_MACHINE_SHOP)->max[0] - 22) M.arena = true;
+  }
   out->boss_arena = M.arena;
   /* the kitchen's charge runs while someone is at the table */
   if (M.level == LV_KITCHEN && M.charging && M.charge < CHARGE_S) {
-    if (by_charger(player)) M.charge = fminf(CHARGE_S, M.charge + dt);
+    if (by_charger(player) || (sec_on && by_charger(sec_pos))) M.charge = fminf(CHARGE_S, M.charge + dt);
     int stage = M.charge >= CHARGE_S ? 4 : 1 + (int)(M.charge / (CHARGE_S / 3));
     if (stage > M.count) M.count = stage;
     if (M.charge >= CHARGE_S) { M.charged_t = M.t; out->banner = "BATTERIES CHARGED"; sfx(SFX_UI_OK, 0, 1); }
@@ -1256,10 +1265,10 @@ void mission_update(float dt, v3 player, mission_out_t *out) {
     bool go = false;
     switch (t->kind) {
       case TR_LOAD: go = true; break;
-      case TR_ZONE: go = in_zone(t, player); break;
+      case TR_ZONE: go = in_zone(t, player) || (sec_on && in_zone(t, sec_pos)); break;
       case TR_WEAPON: go = M.have_weapon; break;
       case TR_COUNT: go = M.count >= (int)t->val; break;
-      case TR_BELOW: go = player.y < t->val; break;
+      case TR_BELOW: go = player.y < t->val || (sec_on && sec_pos.y < t->val); break;
       case TR_BOSS_HP: go = enemy_boss_active() && enemy_boss_health() <= t->val; break;
       case TR_BOSS_DEAD: go = enemy_boss_dead(); break;
     }
@@ -1293,7 +1302,7 @@ void mission_update(float dt, v3 player, mission_out_t *out) {
     if (line) { out->radio_beat = b; M.beat_gap = 1.2f + (float)strlen(line) * 0.055f; }
   }
   /* pickups: bob and spin, taken by walking through */
-  v3 chest = v3_add(player, v3_(0, 0.9f, 0));
+  v3 chests[2] = {v3_add(player, v3_(0, 0.9f, 0)), v3_add(sec_pos, v3_(0, 0.9f, 0))};
   for (int k = 0; k < M.np; k++) {
     pick_t *p = &M.P[k];
     if (p->taken || !p->prop) continue;
@@ -1301,10 +1310,15 @@ void mission_update(float dt, v3 player, mission_out_t *out) {
     float y = p->at.y + 0.25f + sinf(ph) * 0.12f;
     t3_object_set_position(p->prop, p->at.x, y, p->at.z);
     t3_object_set_rotation(p->prop, 0, M.t * (p->kind == PICK_PROP ? 4.0f : 1.6f) + k, 0);
-    v3 d = v3_sub(v3_(p->at.x, y + 0.4f, p->at.z), chest);
-    p->prop->visible = v3_dot(d, d) < 160 * 160;
-    if (d.x * d.x + d.z * d.z < TAKE_R * TAKE_R && fabsf(d.y) < 1.6f) {
-      p->taken = true; p->prop->visible = false;
+    int by = -1;
+    p->prop->visible = false;
+    for (int w = 0; w < nwho; w++) {
+      v3 d = v3_sub(v3_(p->at.x, y + 0.4f, p->at.z), chests[w]);
+      p->prop->visible |= v3_dot(d, d) < 160 * 160;
+      if (by < 0 && d.x * d.x + d.z * d.z < TAKE_R * TAKE_R && fabsf(d.y) < 1.6f) by = w;
+    }
+    if (by >= 0) {
+      p->taken = true; p->prop->visible = false; out->taker = by;
       if (p->kind == PICK_PACK) {
         M.have_weapon = true; M.weapon_t = M.t;   /* the level's key item: on_weapon fires */
         out->banner = "CHARGER PACK";
@@ -1326,16 +1340,18 @@ void mission_update(float dt, v3 player, mission_out_t *out) {
     printers_tick(dt);
     if (M.count != M.last_count && M.count > 0) out->banner = M.count >= LM_PRINTER_N ? "JOB QUEUE EMPTY" : "PRINT CANCELLED";
     if (printer_in_reach(player) >= 0) out->prompt = "PULL THE PLUG";
+    if (sec_on && printer_in_reach(sec_pos) >= 0) out->prompt2 = "PULL THE PLUG";
   }
   if (M.level == LV_METALFAB && M.count != M.last_count && M.count > 0) {
     snprintf(banner_buf, sizeof banner_buf, M.count >= M.ncrate ? "SUPPLY DUMP WRECKED" : "CRATE %d/%d", M.count, M.ncrate);
     out->banner = banner_buf;
   }
   if (M.level == LV_KITCHEN && M.have_weapon && !M.charging && at_charger(player)) out->prompt = "PLUG IN THE CHARGER";
+  if (sec_on && M.level == LV_KITCHEN && M.have_weapon && !M.charging && at_charger(sec_pos)) out->prompt2 = "PLUG IN THE CHARGER";
   M.last_count = M.count;
   markers();
   objective(out, player);
-  out->done = level_done(player);
+  out->done = level_done(player) || (sec_on && level_done(sec_pos));
 }
 
 /* ── the interact button ── */

@@ -17,6 +17,25 @@ typedef enum {
   HUD_CINE          /* a cutscene: nothing but hud_cine.c's captions */
 } hud_mode;
 
+/* one player's half of the screen in two-player mode (hud_t.split): what the
+ * one-player HUD shows of the player, positions in the half's own pixels
+ * (640 x 720, its centre at 320, 360) */
+typedef struct {
+  const char *name;            /* the hero */
+  float health, jet;           /* 0..1 */
+  bool jetting;
+  int weapon; const char *weapon_name; int ammo; bool owned[4]; int lipos;
+  float charge;
+  float hit_marker; bool hit_weak;
+  float hurt, hurt_angle;
+  bool used_pad, first_person;
+  const char *prompt;
+  bool marker_on; float marker_x, marker_y; bool marker_behind; float marker_dist;
+  bool scoped; int zoom; float range; bool on_enemy, on_weak;
+  bool weak_mark; float weak_x, weak_y;
+  float down;                  /* > 0: on the floor, seconds until they get up */
+} hud_player_t;
+
 typedef struct {
   hud_mode mode;
   float t;                     /* seconds in this mode */
@@ -56,7 +75,8 @@ typedef struct {
   bool weak_mark; float weak_x, weak_y;
   /* boss */
   bool boss; float boss_health; int boss_phase; const char *boss_name;
-  /* menus: the selected row; title rows are hero, the unlocked levels, then music, shake, invert, view */
+  /* menus: the selected row; title rows are hero, the unlocked levels, then players, music, shake, invert, view;
+   * pause rows are resume, restart, settings, leave co-op (two players only), quit, then the four settings */
   int menu_sel;
   int unlocked;
   bool music_on, shake_on, invert_y;
@@ -70,6 +90,13 @@ typedef struct {
   const char *radio_speaker, *radio_text; float radio_t;
   const char *quip;            /* the death screen's line */
   const char *title_place; int title_scene;   /* the title reel's scene: where in the lab it is */
+  /* two players */
+  bool split;                  /* split screen: pl[0] the left half (player 1), pl[1] the right; the fields above are shared */
+  hud_player_t pl[2];
+  bool coop;                   /* player 2 is in (the pause menu's LEAVE CO-OP row) */
+  bool join_hint;              /* one player and a second pad: "P2 PRESS START TO JOIN" */
+  int players;                 /* the title's PLAYERS row: 1 or 2 */
+  bool pad2;                   /* a second pad is there (the row can be 2) */
 } hud_t;
 
 void hud_init(void);

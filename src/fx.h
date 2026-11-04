@@ -7,6 +7,10 @@
 void fx_init(t3_scene *scene);
 void fx_clear(void);
 void fx_update(float dt, const t3_camera *cam);
+/* split screen: fx_view faces the particles to one camera before each view is
+ * drawn, then fx_age steps them once (in place of fx_update) */
+void fx_view(const t3_camera *cam);
+void fx_age(float dt);
 void fx_tracer(v3 from, v3 to, uint32_t color, float width);
 void fx_muzzle(v3 at, v3 dir);
 void fx_sparks(v3 at, v3 normal, uint32_t color, int count);

@@ -28,8 +28,14 @@ typedef struct {
   bool done;                                   /* the level is complete */
   const char *banner;                          /* a one-off banner ("PRINT CANCELLED"), NULL none */
   const char *prompt;                          /* an interact prompt while the player is in reach of something ("PULL THE PLUG"), NULL none */
+  const char *prompt2;                         /* ...the second player's (two-player mode) */
+  int taker;                                   /* who walked through this frame's pickup: 0 the player, 1 the second */
 } mission_out_t;
 
+/* two-player mode: the second player's position for the next mission_update
+ * (off: one player). Pickups, checkpoints, story triggers, objectives and the
+ * level's end then go off for either of them */
+void mission_set_second(bool on, v3 pos);
 void mission_update(float dt, v3 player, mission_out_t *out);
 v3 mission_checkpoint(void);                   /* where to respawn */
 /* the player's shots: an objective at the hit point takes the damage (the

@@ -50,15 +50,23 @@ static const int AMMO_START[WP_COUNT] = {-1, 40, 10, -1};
 static const int AMMO_CAP[WP_COUNT] = {-1, 80, 20, -1};
 
 enum { SH_BAND, SH_GLUE };
-typedef struct { bool on; int kind; v3 p, v; float life; } shot_t;
+typedef struct { bool on; int kind; v3 p, v; float life; int owner; } shot_t;
 typedef struct { bool on; v3 p; float r, life; } puddle_t;
-typedef struct { bool on, touched, puffing; v3 p, v; float t, fuse, spin; t3_mesh *mesh; } lipo_t;
+typedef struct { bool on, touched, puffing; v3 p, v; float t, fuse, spin; t3_mesh *mesh; int owner; } lipo_t;
 
 static t3_scene *scn;
-static bool owned[WP_COUNT];
-static int ammo[WP_COUNT], lipos, cur = -1;
-static float cd, swing_t, swing_cd, charge, throw_cd;
-static bool swing_hit, charging;
+/* one player's kit: what they carry and what their hands are doing. Shots,
+ * puddles and LiPos in flight are shared pools, each shot and LiPo marked
+ * with the player who let it go (whose HUD shows the hit) */
+typedef struct {
+  bool owned[WP_COUNT];
+  int ammo[WP_COUNT], lipos, cur;
+  float cd, swing_t, swing_cd, charge, throw_cd;
+  bool swing_hit, charging;
+} kit_t;
+static kit_t KIT[2] = {{.cur = -1}, {.cur = -1}};
+static kit_t *K = &KIT[0];
+static int kp_id;
 static shot_t S[MAXS];
 static puddle_t PD[MAXPUD];
 static lipo_t L[MAXL];
@@ -106,23 +114,29 @@ void weapon_init(t3_scene *scene) {
   }
 }
 
-static int first_owned(void) { for (int w = 0; w < WP_COUNT; w++) if (owned[w]) return w; return -1; }
+static int first_owned(void) { for (int w = 0; w < WP_COUNT; w++) if (K->owned[w]) return w; return -1; }
 
-void weapon_reset(int level) {
-  memset(owned, 0, sizeof owned);
+void weapon_set_player(int p) { kp_id = p == 1 ? 1 : 0; K = &KIT[kp_id]; }
+
+/* each of these is for both players: the kits start the same and every find and pickup goes to both */
+#define BOTH(body) do { kit_t *keep = K; for (int pi_ = 0; pi_ < 2; pi_++) { K = &KIT[pi_]; body; } K = keep; } while (0)
+
+static void reset_kit(int level) {
+  memset(K->owned, 0, sizeof K->owned);
   /* the repeater from the start (the prologue hands it over); what the earlier levels found: the glue gun in 2,
    * the coilgun at the end of 4, the iron in 5 */
   unsigned have = mission_weapons_at_start(level);
-  for (int w = 0; w < WP_COUNT; w++) owned[w] = (have >> w) & 1;
-  owned[WP_BANDS] = true;
+  for (int w = 0; w < WP_COUNT; w++) K->owned[w] = (have >> w) & 1;
+  K->owned[WP_BANDS] = true;
 #ifdef SP_TEST_ARMY
-  for (int w = 0; w < WP_COUNT; w++) owned[w] = true;
+  for (int w = 0; w < WP_COUNT; w++) K->owned[w] = true;
 #endif
-  for (int w = 0; w < WP_COUNT; w++) ammo[w] = owned[w] ? AMMO_START[w] : (AMMO_START[w] < 0 ? -1 : 0);
-  lipos = 3;
-  cur = first_owned();
-  cd = swing_t = swing_cd = charge = throw_cd = 0; charging = false;
+  for (int w = 0; w < WP_COUNT; w++) K->ammo[w] = K->owned[w] ? AMMO_START[w] : (AMMO_START[w] < 0 ? -1 : 0);
+  K->lipos = 3;
+  K->cur = first_owned();
+  K->cd = K->swing_t = K->swing_cd = K->charge = K->throw_cd = 0; K->charging = false;
 }
+void weapon_reset(int level) { BOTH(reset_kit(level)); }
 
 void weapon_clear(void) {
   memset(S, 0, sizeof S);
@@ -131,31 +145,36 @@ void weapon_clear(void) {
   for (int i = 0; i < MAXL; i++) { L[i].on = false; if (L[i].mesh) ((t3_object *)L[i].mesh)->visible = false; }
   if (im_glob) { im_glob->count = 0; ((t3_object *)im_glob)->visible = false; }
   if (im_puddle) { im_puddle->count = 0; ((t3_object *)im_puddle)->visible = false; }
-  charging = false; charge = 0; swing_t = 0;
+  BOTH(K->charging = false; K->charge = 0; K->swing_t = 0);
 }
+void weapon_cancel(void) { K->charging = false; K->charge = 0; K->swing_t = 0; }
 
+static void unlock_kit(int w) {
+  if (!K->owned[w]) {
+    K->owned[w] = true;
+    if (AMMO_START[w] >= 0) K->ammo[w] = K->ammo[w] > AMMO_START[w] ? K->ammo[w] : AMMO_START[w];
+  }
+  K->cur = w; K->charging = false; K->charge = 0;
+}
 void weapon_unlock(int w) {
   if (w < 0 || w >= WP_COUNT) return;
-  if (!owned[w]) {
-    owned[w] = true;
-    if (AMMO_START[w] >= 0) ammo[w] = ammo[w] > AMMO_START[w] ? ammo[w] : AMMO_START[w];
-  }
-  cur = w; charging = false; charge = 0;
+  BOTH(unlock_kit(w));
 }
-bool weapon_unlocked(int w) { return w >= 0 && w < WP_COUNT && owned[w]; }
-int weapon_current(void) { return cur; }
-int weapon_ammo(int w) { return w >= 0 && w < WP_COUNT ? ammo[w] : -1; }
-int weapon_lipos(void) { return lipos; }
+bool weapon_unlocked(int w) { return w >= 0 && w < WP_COUNT && K->owned[w]; }
+int weapon_current(void) { return K->cur; }
+int weapon_ammo(int w) { return w >= 0 && w < WP_COUNT ? K->ammo[w] : -1; }
+int weapon_lipos(void) { return K->lipos; }
 const char *weapon_name(int w) { return w >= 0 && w < WP_COUNT ? NAME[w] : ""; }
 
-void weapon_give(int pickup) {
+static void give_kit(int pickup) {
   switch (pickup) {
-  case PK_GLUE: ammo[WP_GLUE] = ammo[WP_GLUE] < 0 ? 15 : ammo[WP_GLUE] + 15; if (ammo[WP_GLUE] > AMMO_CAP[WP_GLUE]) ammo[WP_GLUE] = AMMO_CAP[WP_GLUE]; break;
-  case PK_CELLS: ammo[WP_COIL] = ammo[WP_COIL] < 0 ? 4 : ammo[WP_COIL] + 4; if (ammo[WP_COIL] > AMMO_CAP[WP_COIL]) ammo[WP_COIL] = AMMO_CAP[WP_COIL]; break;
-  case PK_LIPO: if (lipos < 5) lipos++; break;
+  case PK_GLUE: K->ammo[WP_GLUE] = K->ammo[WP_GLUE] < 0 ? 15 : K->ammo[WP_GLUE] + 15; if (K->ammo[WP_GLUE] > AMMO_CAP[WP_GLUE]) K->ammo[WP_GLUE] = AMMO_CAP[WP_GLUE]; break;
+  case PK_CELLS: K->ammo[WP_COIL] = K->ammo[WP_COIL] < 0 ? 4 : K->ammo[WP_COIL] + 4; if (K->ammo[WP_COIL] > AMMO_CAP[WP_COIL]) K->ammo[WP_COIL] = AMMO_CAP[WP_COIL]; break;
+  case PK_LIPO: if (K->lipos < 5) K->lipos++; break;
   default: break;
   }
 }
+void weapon_give(int pickup) { BOTH(give_kit(pickup)); }
 
 float weapon_glue_slow(v3 at) {
   for (int i = 0; i < MAXPUD; i++) {
@@ -201,7 +220,7 @@ static void land(hit_t h, v3 at, float dmg, int kind, weapon_out_t *out) {
 }
 
 static shot_t *shot_new(int kind, v3 p, v3 v) {
-  for (int i = 0; i < MAXS; i++) if (!S[i].on) { S[i] = (shot_t){true, kind, p, v, kind == SH_BAND ? 1.6f : 3}; return &S[i]; }
+  for (int i = 0; i < MAXS; i++) if (!S[i].on) { S[i] = (shot_t){true, kind, p, v, kind == SH_BAND ? 1.6f : 3, kp_id}; return &S[i]; }
   return NULL;
 }
 
@@ -229,10 +248,11 @@ static void puddle_at(v3 p) {
   PD[best] = (puddle_t){true, v3_(p.x, p.y + 0.03f, p.z), PUDDLE_R, PUDDLE_T};
 }
 
-static void shots_update(float dt, weapon_out_t *out) {
+static void shots_update(float dt, weapon_out_t *outs) {
   for (int i = 0; i < MAXS; i++) {
     shot_t *s = &S[i];
     if (!s->on) continue;
+    weapon_out_t *out = &outs[s->owner];
     s->life -= dt;
     s->v.y -= (s->kind == SH_BAND ? BAND_GRAV : GLUE_GRAV) * dt;
     v3 step = v3_scale(s->v, dt);
@@ -276,7 +296,7 @@ static void shots_update(float dt, weapon_out_t *out) {
 
 /* ── the coilgun ── */
 static void coil_fire(const weapon_in_t *in, v3 target, weapon_out_t *out) {
-  float dmg = ds_lerp(COIL_LO, COIL_HI, charge);
+  float dmg = ds_lerp(COIL_LO, COIL_HI, K->charge);
   v3 o = in->muzzle, d = v3_norm(v3_sub(target, o));
   float wt = AIM_MAX, t; v3 n = v3_scale(d, -1);
   bool hw = world_raycast(o, d, AIM_MAX, &wt, &n);
@@ -296,18 +316,18 @@ static void coil_fire(const weapon_in_t *in, v3 target, weapon_out_t *out) {
     skip[ns++] = id;
   }
   v3 end = v3_add(o, v3_scale(d, hw ? wt : 120));
-  for (int i = 0; i < 4; i++) if (BM[i].life <= 0) { BM[i].a = o; BM[i].b = end; BM[i].life = 0.3f; BM[i].w = 0.16f + 0.16f * charge; break; }
+  for (int i = 0; i < 4; i++) if (BM[i].life <= 0) { BM[i].a = o; BM[i].b = end; BM[i].life = 0.3f; BM[i].w = 0.16f + 0.16f * K->charge; break; }
   fx_muzzle(o, d);
-  fx_glow(o, 1.2f + charge, C_TEAL);
-  if (hw) { fx_sparks(end, n, C_TEAL, 6 + (int)(charge * 8)); fx_glow(end, 1.5f + 1.5f * charge, 0xbff8f0); }
-  sfx(SFX_COIL, 0, 0.6f + 0.4f * charge);
-  out->recoil = 0.25f + 0.5f * charge;
-  ammo[WP_COIL]--;
+  fx_glow(o, 1.2f + K->charge, C_TEAL);
+  if (hw) { fx_sparks(end, n, C_TEAL, 6 + (int)(K->charge * 8)); fx_glow(end, 1.5f + 1.5f * K->charge, 0xbff8f0); }
+  sfx(SFX_COIL, 0, 0.6f + 0.4f * K->charge);
+  out->recoil = 0.25f + 0.5f * K->charge;
+  K->ammo[WP_COIL]--;
 }
 
 /* ── melee: the iron (or a shove before the iron is found) ── */
 static void melee_resolve(const weapon_in_t *in, weapon_out_t *out) {
-  bool iron = owned[WP_IRON];
+  bool iron = K->owned[WP_IRON];
   float reach = iron ? IRON_REACH : 1.4f, dmg = iron ? IRON_DMG : PUNCH_DMG;
   v3 f = v3_(sinf(in->yaw), 0, cosf(in->yaw));
   v3 c = v3_add(in->body, v3_scale(f, reach * 0.5f));
@@ -348,10 +368,11 @@ static void lipo_pop(lipo_t *l, weapon_out_t *out) {
   ((t3_object *)l->mesh)->visible = false;
 }
 
-static void lipos_update(float dt, weapon_out_t *out) {
+static void lipos_update(float dt, weapon_out_t *outs) {
   for (int i = 0; i < MAXL; i++) {
     lipo_t *l = &L[i];
     if (!l->on) continue;
+    weapon_out_t *out = &outs[l->owner];
     l->t += dt;
     if (!l->puffing) {
       l->v.y -= GRAV_LIPO * dt;
@@ -397,11 +418,11 @@ static void throw_lipo(const weapon_in_t *in, weapon_out_t *out) {
   if (!l) return;
   v3 d = v3_norm(in->dir);
   v3 f = v3_norm(v3_(d.x, 0, d.z));
-  l->on = true; l->touched = l->puffing = false; l->t = 0; l->spin = 0;
+  l->on = true; l->touched = l->puffing = false; l->t = 0; l->spin = 0; l->owner = kp_id;
   l->p = v3_add(v3_add(in->body, v3_scale(f, 0.35f)), v3_(0, 0.3f, 0));
   l->v = v3_add(v3_scale(d, 12), v3_(0, 4.5f, 0));
   ((t3_object *)l->mesh)->visible = true;
-  lipos--;
+  K->lipos--;
   out->threw = true;
   sfx(SFX_LIPO_THROW, 0, 0.8f);
 }
@@ -448,77 +469,83 @@ static void draw_kit(void) {
 }
 
 static void pick(int w) {
-  if (w == cur || w < 0 || w >= WP_COUNT || !owned[w]) return;
-  cur = w; charging = false; charge = 0; cd = fmaxf(cd, 0.15f);
+  if (w == K->cur || w < 0 || w >= WP_COUNT || !K->owned[w]) return;
+  K->cur = w; K->charging = false; K->charge = 0; K->cd = fmaxf(K->cd, 0.15f);
   sfx(SFX_UI, 0, 0.5f);
+}
+
+void weapon_tick(float dt) {
+  wtime += dt;
+  for (int i = 0; i < MAXPUD; i++) if (PD[i].on && (PD[i].life -= dt) <= 0) PD[i].on = false;
 }
 
 void weapon_update(float dt, const weapon_in_t *in, weapon_out_t *out) {
   memset(out, 0, sizeof *out);
-  wtime += dt;
-  cd -= dt; swing_cd -= dt; throw_cd -= dt;
-  for (int i = 0; i < MAXPUD; i++) if (PD[i].on && (PD[i].life -= dt) <= 0) PD[i].on = false;
+  K->cd -= dt; K->swing_cd -= dt; K->throw_cd -= dt;
   enemy_notice_aim(in->eye, in->dir);
   /* switching */
-  if (!charging) {
+  if (!K->charging) {
     if (in->select >= 0) pick(in->select);
     if (in->next || in->prev) {
       int step = in->next ? 1 : WP_COUNT - 1;
-      for (int k = 1; k < WP_COUNT && cur >= 0; k++) { int w = (cur + step * k) % WP_COUNT; if (owned[w]) { pick(w); break; } }
+      for (int k = 1; k < WP_COUNT && K->cur >= 0; k++) { int w = (K->cur + step * k) % WP_COUNT; if (K->owned[w]) { pick(w); break; } }
     }
   }
   /* melee: its own button for any weapon, or the fire button with the iron out */
-  if (swing_t > 0) {
-    float before = swing_t;
-    swing_t -= dt;
-    if (!swing_hit && before > 0.22f && swing_t <= 0.22f) { swing_hit = true; melee_resolve(in, out); }
-    if (owned[WP_IRON]) {
+  if (K->swing_t > 0) {
+    float before = K->swing_t;
+    K->swing_t -= dt;
+    if (!K->swing_hit && before > 0.22f && K->swing_t <= 0.22f) { K->swing_hit = true; melee_resolve(in, out); }
+    if (K->owned[WP_IRON]) {
       v3 f = v3_(sinf(in->yaw), 0, cosf(in->yaw));
       fx_glow(v3_add(in->body, v3_add(v3_scale(f, 0.9f), v3_(0, 0.1f, 0))), 0.35f, 0xff6a2a);
     }
   }
-  bool want_swing = in->melee || (cur == WP_IRON && in->fire);
-  if (want_swing && swing_cd <= 0 && !charging) {
-    swing_t = 0.32f; swing_cd = 0.45f; swing_hit = false;
+  bool want_swing = in->melee || (K->cur == WP_IRON && in->fire);
+  if (want_swing && K->swing_cd <= 0 && !K->charging) {
+    K->swing_t = 0.32f; K->swing_cd = 0.45f; K->swing_hit = false;
     out->swing = true;
-    sfx(SFX_IRON, 0, owned[WP_IRON] ? 0.8f : 0.4f);
+    sfx(SFX_IRON, 0, K->owned[WP_IRON] ? 0.8f : 0.4f);
   }
   /* fire */
-  if (cur == WP_BANDS && (in->fire || in->fire_held) && cd <= 0 && swing_t <= 0) {   /* holding the trigger repeats at the fire rate */
+  if (K->cur == WP_BANDS && (in->fire || in->fire_held) && K->cd <= 0 && K->swing_t <= 0) {   /* holding the trigger repeats at the fire rate */
     v3 tgt = aim_point(in);
     shot_new(SH_BAND, in->muzzle, launch(in->muzzle, tgt, BAND_SPEED, BAND_GRAV));
     fx_muzzle(in->muzzle, v3_sub(tgt, in->muzzle));
     sfx(SFX_BAND, 0, 0.8f);
     out->recoil = 0.12f;
-    cd = BAND_GAP;
-  } else if (cur == WP_GLUE && (in->fire || in->fire_held) && cd <= 0 && swing_t <= 0) {
-    if (ammo[WP_GLUE] > 0) {
+    K->cd = BAND_GAP;
+  } else if (K->cur == WP_GLUE && (in->fire || in->fire_held) && K->cd <= 0 && K->swing_t <= 0) {
+    if (K->ammo[WP_GLUE] > 0) {
       v3 tgt = aim_point(in);
       shot_new(SH_GLUE, in->muzzle, launch(in->muzzle, tgt, GLUE_SPEED, GLUE_GRAV));
       sfx(SFX_GLUE, 0, 0.7f);
       out->recoil = 0.08f;
-      ammo[WP_GLUE]--;
-      cd = GLUE_GAP;
-    } else if (in->fire) { sfx(SFX_UI, 0, 0.4f); cd = 0.3f; }
-  } else if (cur == WP_COIL) {
-    if (in->fire && ammo[WP_COIL] <= 0) sfx(SFX_UI, 0, 0.4f);
-    if (in->fire_held && ammo[WP_COIL] > 0 && cd <= 0 && swing_t <= 0) {
-      charging = true;
-      charge = fminf(1, charge + dt / COIL_T);
-      sfx(SFX_COIL_CHARGE, 0, 0.2f + 0.8f * charge);
-      fx_glow(in->muzzle, 0.2f + 0.5f * charge * (0.85f + 0.15f * sinf(wtime * 50)), C_TEAL);
+      K->ammo[WP_GLUE]--;
+      K->cd = GLUE_GAP;
+    } else if (in->fire) { sfx(SFX_UI, 0, 0.4f); K->cd = 0.3f; }
+  } else if (K->cur == WP_COIL) {
+    if (in->fire && K->ammo[WP_COIL] <= 0) sfx(SFX_UI, 0, 0.4f);
+    if (in->fire_held && K->ammo[WP_COIL] > 0 && K->cd <= 0 && K->swing_t <= 0) {
+      K->charging = true;
+      K->charge = fminf(1, K->charge + dt / COIL_T);
+      sfx(SFX_COIL_CHARGE, 0, 0.2f + 0.8f * K->charge);
+      fx_glow(in->muzzle, 0.2f + 0.5f * K->charge * (0.85f + 0.15f * sinf(wtime * 50)), C_TEAL);
     }
-    if (charging && (in->fire_released || !in->fire_held)) {
+    if (K->charging && (in->fire_released || !in->fire_held)) {
       coil_fire(in, aim_point(in), out);
-      charging = false; charge = 0; cd = 0.35f;
+      K->charging = false; K->charge = 0; K->cd = 0.35f;
     }
-    out->charge = charge;
+    out->charge = K->charge;
   }
-  out->scope = in->aim && cur == WP_COIL;
+  out->scope = in->aim && K->cur == WP_COIL;
   /* throw */
-  if (in->throw_lipo && lipos > 0 && throw_cd <= 0) { throw_lipo(in, out); throw_cd = 0.5f; }
-  shots_update(dt, out);
-  lipos_update(dt, out);
+  if (in->throw_lipo && K->lipos > 0 && K->throw_cd <= 0) { throw_lipo(in, out); K->throw_cd = 0.5f; }
+}
+
+void weapon_step(float dt, weapon_out_t outs[2]) {
+  shots_update(dt, outs);
+  lipos_update(dt, outs);
   beams_update(dt);
   draw_kit();
 }

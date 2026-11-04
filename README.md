@@ -10,7 +10,7 @@ A third-person (or first-person) shooter for the HeatSync Labs game station (was
 
 Download `small-parts.html` from the latest release (or build it, below) and open it. It is one file with the game inside: double-click it, no server needed. Click the game to aim with the mouse. Radio calls and dialogue are spoken aloud.
 
-Pick who you are on the title screen (Moheeb or Luis); the other one is your buddy. Hold jump in the air for the jetpack, and watch the battery icon: it recharges on the ground. Find the weapons along the route, scope the coilgun with the aim button and shoot the weak points on the bosses. Follow the orange arrow for the objective; distances are in centimetres.
+Pick who you are on the title screen (Moheeb or Luis); the other one is your buddy, or a second player's. Hold jump in the air for the jetpack, and watch the battery icon: it recharges on the ground. Find the weapons along the route, scope the coilgun with the aim button and shoot the weak points on the bosses. Follow the orange arrow for the objective; distances are in centimetres.
 
 | | Pad | Keyboard | Mouse |
 |---|---|---|---|
@@ -30,6 +30,8 @@ Pick who you are on the title screen (Moheeb or Luis); the other one is your bud
 The controls are drawn on the level card at the start of each level and in the pause menu, with the pad and keyboard layouts side by side; level 1 also walks you through move, look, jump, jet, fire and aim as you play. When you stand near something to use, a big prompt with the X or E button appears under the crosshair.
 
 Menus: stick, d-pad or arrows; A or Enter picks, B or Esc backs out. Hold START or Enter to skip a cutscene.
+
+Two players: plug in a second pad and press START (or A) on it, during play or on the title, and player 2 takes over the buddy; the screen splits, player 1 on the left with the keyboard and the first pad, player 2 on the right with the same pad layout. The title's PLAYERS row picks 1 or 2 for the next level. A player who goes down gets up again at the other's side after six seconds; both down at once is back to the checkpoint. Player 2 leaves with LEAVE CO-OP in the pause menu (or by unplugging), and the buddy takes back over.
 
 On the station, copy `build/small-parts.wasc` to `/userdata/roms/wasmcart/` (back up `gamelist.xml` first if you add an entry).
 

@@ -274,7 +274,10 @@ static void put(pool_t *P, int i, v3 x, v3 y, v3 z, v3 p, const float c[3], floa
   t3_instanced_mesh_set_color_at(P->im, i, col);
 }
 
-static void run_pool(pool_t *P, float dt) {
+/* mode: RUN_DRAW writes the instances for the camera, RUN_AGE moves and ages
+ * the particles, both (fx_update) does each particle's draw then its step */
+enum { RUN_DRAW = 1, RUN_AGE = 2 };
+static void run_pool(pool_t *P, float dt, int mode) {
   int n = 0;
   for (int k = 0; k < P->cap; k++) {
     part_t *q = &P->p[k];
@@ -282,7 +285,16 @@ static void run_pool(pool_t *P, float dt) {
     float t = 1 - q->life / q->max, fade = 1 - t;
     float s = ds_lerp(q->s0, q->s1, t);
     v3 view = v3_norm(v3_sub(q->p, cam_p));
-    switch (q->kind) {
+    if (!(mode & RUN_DRAW)) {
+      /* the paper forms move before they are drawn; only aging here */
+      if (q->kind == K_FORM && !q->bounce) {
+        float age = q->max - q->life;
+        q->p.y -= 1.1f * dt;
+        q->p.x += sinf(age * 3.1f + q->w0) * 0.9f * dt; q->p.z += cosf(age * 2.3f + q->w0) * 0.7f * dt;
+        q->rot += sinf(age * 2 + q->w0) * 1.2f * dt;
+        if (q->p.y <= q->fy + 0.03f) { q->p.y = q->fy + 0.03f; q->bounce = 1; }
+      }
+    } else switch (q->kind) {
     case K_SMOKE: {
       float sc = s * fminf(1, fade * 2.5f), cr = cosf(q->rot) * sc, sr = sinf(q->rot) * sc;
       put(P, n++, v3_add(v3_scale(cam_r, cr), v3_scale(cam_u, sr)), v3_add(v3_scale(cam_r, -sr), v3_scale(cam_u, cr)), view, q->p, q->c, 1);
@@ -308,7 +320,7 @@ static void run_pool(pool_t *P, float dt) {
       break; }
     case K_FORM: {
       float age = q->max - q->life;
-      if (!q->bounce) {
+      if (!q->bounce && (mode & RUN_AGE)) {
         /* drifts down and sways like paper; the last drops land flat */
         q->p.y -= 1.1f * dt;
         q->p.x += sinf(age * 3.1f + q->w0) * 0.9f * dt; q->p.z += cosf(age * 2.3f + q->w0) * 0.7f * dt;
@@ -327,6 +339,7 @@ static void run_pool(pool_t *P, float dt) {
       break; }
     }
     /* age after drawing, so a one-frame effect is drawn once */
+    if (!(mode & RUN_AGE)) continue;
     q->life -= dt;
     if (q->kind != K_LINE && q->kind != K_FLAT && q->kind != K_RINGB && q->kind != K_FORM) {
       q->v.y -= q->grav * dt;
@@ -335,15 +348,24 @@ static void run_pool(pool_t *P, float dt) {
       if (q->bounce && q->p.y < q->fy + 0.03f && q->v.y < 0) { q->p.y = q->fy + 0.03f; q->v.y *= -0.35f; q->v.x *= 0.6f; q->v.z *= 0.6f; }
     }
   }
+  if (!(mode & RUN_DRAW)) return;
   P->im->count = n;
   ((t3_object *)P->im)->visible = n > 0;
   P->im->instance_matrix->version++;
   if (P->im->instance_color) P->im->instance_color->version++;
 }
 
-void fx_update(float dt, const t3_camera *cam) {
-  frame_no++;
+static void set_cam(const t3_camera *cam) {
   const float *m = cam->base.matrix_world.e;
   cam_r = v3_(m[0], m[1], m[2]); cam_u = v3_(m[4], m[5], m[6]); cam_p = v3_(m[12], m[13], m[14]);
-  run_pool(&glow, dt); run_pool(&ring, dt); run_pool(&blob, dt); run_pool(&smoke, dt); run_pool(&form, dt);
 }
+static void run_all(float dt, int mode) {
+  run_pool(&glow, dt, mode); run_pool(&ring, dt, mode); run_pool(&blob, dt, mode); run_pool(&smoke, dt, mode); run_pool(&form, dt, mode);
+}
+void fx_update(float dt, const t3_camera *cam) {
+  frame_no++;
+  set_cam(cam);
+  run_all(dt, RUN_DRAW | RUN_AGE);
+}
+void fx_view(const t3_camera *cam) { set_cam(cam); run_all(0, RUN_DRAW); }
+void fx_age(float dt) { frame_no++; run_all(dt, RUN_AGE); }

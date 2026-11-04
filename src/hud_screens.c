@@ -179,29 +179,34 @@ void scr_title(const hud_t *h, float dt) {
   }
   hg_tex(&L_levels, 48 - (1 - hud_ease_out(ds_clamp((t - 0.7f) / 0.5f, 0, 1))) * 80, 410, ma);
 
-  /* settings on the right: music, shake, invert Y, view */
-  key = (uint32_t)(sel - 1 - n + 8) | (uint32_t)h->music_on << 8 | (uint32_t)h->shake_on << 9 | (uint32_t)h->invert_y << 10 | (uint32_t)h->first_person << 11;
-  c = layer_begin(&L_sets, 360, 244, key);
+  /* settings on the right: players, music, shake, invert Y, view */
+  bool two = h->players == 2;
+  key = (uint32_t)(sel - 1 - n + 8) | (uint32_t)h->music_on << 8 | (uint32_t)h->shake_on << 9 | (uint32_t)h->invert_y << 10 | (uint32_t)h->first_person << 11
+      | (uint32_t)two << 12 | (uint32_t)h->pad2 << 13;
+  c = layer_begin(&L_sets, 360, 298, key);
   if (c) {
     p_tape(c, 0, 0, 20, F_MONO, 14, 2, "SETTINGS", C_TEAL, C_INK);
-    static const char *lab[4] = {"MUSIC", "SHAKE", "INVERT Y", "VIEW"};
-    bool val[4] = {h->music_on, h->shake_on, h->invert_y, h->first_person};
-    for (int k = 0; k < 4; k++) {
+    static const char *lab[5] = {"PLAYERS", "MUSIC", "SHAKE", "INVERT Y", "VIEW"};
+    bool val[5] = {two, h->music_on, h->shake_on, h->invert_y, h->first_person};
+    for (int k = 0; k < 5; k++) {
       bool on = sel == 1 + n + k;
       float y = 28 + k * 54;
       row(c, 0, y, 360, 46, on, false);
       p_text(c, F_DISPLAY, 18, 2, CV_LEFT, lab[k], 18, y + 31, on ? C_INK : C_CREAM, 1);
-      const char *v = k == 3 ? (val[k] ? "FIRST PERSON" : "THIRD PERSON") : (val[k] ? "ON" : "OFF");
-      uint32_t vc = on ? C_INK : (k == 3 || val[k]) ? C_GOO : 0x8d93a3;
+      const char *v = k == 0 ? (two ? "2  SPLIT SCREEN" : "1") : k == 4 ? (val[k] ? "FIRST PERSON" : "THIRD PERSON") : (val[k] ? "ON" : "OFF");
+      uint32_t vc = on ? C_INK : (k == 4 || val[k]) ? C_GOO : k == 0 ? C_CREAM : 0x8d93a3;
       p_text(c, F_DISPLAY, 18, 2, CV_RIGHT, v, 342, y + 31, vc, 1);
     }
     layer_end(&L_sets, c);
   }
-  hg_tex(&L_sets, 880 + (1 - hud_ease_out(ds_clamp((t - 0.7f) / 0.5f, 0, 1))) * 80, 334, ma);
+  hg_tex(&L_sets, 880 + (1 - hud_ease_out(ds_clamp((t - 0.7f) / 0.5f, 0, 1))) * 80, 290, ma);
+  if (h->pad2 && !two) hud_join_hint(250);
 
   /* the one line of help for the selected row */
   const char *help = sel == 0 ? "{LEFTRIGHT} PICK   {PICK} CONFIRM"
                    : sel <= n ? "{UPDOWN} MOVE   {PICK} START"
+                   : sel == n + 1 && !h->pad2 ? "PLUG IN A SECOND PAD FOR TWO PLAYERS"
+                   : sel == n + 1 ? "{LEFTRIGHT} PICK   P2 {=START} JOINS"
                    : "{UPDOWN} MOVE   {PICK} CHANGE";
   c = layer_begin(&L_prompt, 700, 36, hash_str(help, 3 + (uint32_t)h->used_pad));
   if (c) {
@@ -272,12 +277,18 @@ void scr_pause(const hud_t *h) {
   }
   hg_tex(&L_ptitle, 60, 36, 1);
   int sel = h->menu_sel;
-  uint32_t key = (uint32_t)sel | (uint32_t)h->music_on << 8 | (uint32_t)h->shake_on << 9 | (uint32_t)h->invert_y << 10 | (uint32_t)h->used_pad << 11 | (uint32_t)h->first_person << 12;
-  c = layer_begin(&L_pmenu, 520, 560, key);
+  /* two players: LEAVE CO-OP before QUIT, the settings one row further down */
+  int nm = h->coop ? 5 : 4;
+  float sy = nm * 58 + 12;
+  uint32_t key = (uint32_t)sel | (uint32_t)h->music_on << 8 | (uint32_t)h->shake_on << 9 | (uint32_t)h->invert_y << 10 | (uint32_t)h->used_pad << 11 | (uint32_t)h->first_person << 12
+               | (uint32_t)h->coop << 13;
+  c = layer_begin(&L_pmenu, 520, 620, key);
   if (c) {
-    static const char *rows[4] = {"RESUME", "RESTART LEVEL", "SETTINGS", "QUIT TO TITLE"};
-    for (int i = 0; i < 4; i++) {
-      bool on = sel == i || (i == 2 && sel >= 4);
+    static const char *rows1[4] = {"RESUME", "RESTART LEVEL", "SETTINGS", "QUIT TO TITLE"};
+    static const char *rows2[5] = {"RESUME", "RESTART LEVEL", "SETTINGS", "LEAVE CO-OP", "QUIT TO TITLE"};
+    const char *const *rows = h->coop ? rows2 : rows1;
+    for (int i = 0; i < nm; i++) {
+      bool on = sel == i || (i == 2 && sel >= nm);
       float y = i * 58;
       row(c, 0, y, 520, 50, on, false);
       p_text(c, F_DISPLAY, 24, 3, CV_LEFT, rows[i], 28, y + 35, on ? C_INK : C_CREAM, 1);
@@ -286,14 +297,14 @@ void scr_pause(const hud_t *h) {
     static const char *lab[4] = {"MUSIC", "SCREEN SHAKE", "INVERT Y", "VIEW"};
     bool val[4] = {h->music_on, h->shake_on, h->invert_y, h->first_person};
     for (int k = 0; k < 4; k++) {
-      bool on = sel == 4 + k;
-      float y = 244 + k * 48;
+      bool on = sel == nm + k;
+      float y = sy + k * 48;
       p_plate(c, 40, y, 480, 40, 9, on ? C_TEAL : C_INK, on ? 1.f : 0.78f);
       p_text(c, F_DISPLAY, 18, 2, CV_LEFT, lab[k], 60, y + 27, on ? C_INK : C_CREAM, 1);
       const char *v = k == 3 ? (val[k] ? "FIRST PERSON" : "THIRD PERSON") : (val[k] ? "ON" : "OFF");
       p_text(c, F_DISPLAY, 18, 2, CV_RIGHT, v, 500, y + 27, on ? C_INK : (k == 3 || val[k]) ? C_GOO : 0x8d93a3, 1);
     }
-    g_markup(c, 0, 478, CV_LEFT, F_MONO, 16, 0, 0xa0a6b6, 22, h->used_pad, "{UPDOWN} MOVE   {PICK} PICK   {BACK} BACK   {PAUSE} RESUME", true);
+    g_markup(c, 0, sy + (h->coop ? 214 : 234), CV_LEFT, F_MONO, 16, 0, 0xa0a6b6, 22, h->used_pad, "{UPDOWN} MOVE   {PICK} PICK   {BACK} BACK   {PAUSE} RESUME", true);
     layer_end(&L_pmenu, c);
   }
   hg_tex(&L_pmenu, 60, 170, 1);
